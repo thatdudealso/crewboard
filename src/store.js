@@ -53,7 +53,7 @@ function parseTicket(contents, filePath) {
 }
 
 function ticketFileName(ticketId) {
-  if (!/^CB-\d{4,}(?:-[a-f0-9]{8})?$/.test(ticketId)) throw new Error(`Invalid ticket id: ${ticketId}`);
+  if (!/^CB-\d{4,}$/.test(ticketId)) throw new Error(`Invalid ticket id: ${ticketId}`);
   return `${ticketId}.md`;
 }
 
@@ -165,8 +165,12 @@ export class BoardStore {
     await this.repairEventLog();
     const events = await this.readEvents();
     const lastEventCursor = events.at(-1)?.cursor ?? 0;
+    const parents = events
+      .filter((event) => !events.some((candidate) => candidate.parents?.includes(event.id)))
+      .map((event) => event.id);
     const event = {
       id: `e-${crypto.randomUUID()}`,
+      parents,
       cursor: lastEventCursor + 1,
       at: now(),
       action,
@@ -222,9 +226,8 @@ export class BoardStore {
     if (!title?.trim()) throw new Error('A ticket title is required.');
     this.assertStatus(status);
     const existingTickets = await this.listTickets({ includeArchived: true });
-    const nextTicketNumber = Math.max(this.config.nextTicketNumber - 1, ...existingTickets.map((existing) => Number(existing.id.match(/^CB-(\d+)/)?.[1]) || 0)) + 1;
     const ticket = {
-      id: `CB-${String(nextTicketNumber).padStart(4, '0')}-${crypto.randomUUID().slice(0, 8)}`,
+      id: `CB-${BigInt(`0x${crypto.randomUUID().replaceAll('-', '')}`).toString()}`,
       title: title.trim(),
       body,
       status,
@@ -233,7 +236,7 @@ export class BoardStore {
       priority,
       links: cleanList(links),
       source,
-      position: position ?? nextTicketNumber,
+      position: position ?? existingTickets.length + 1,
       archivedAt,
       transferredTo: null,
       statusHistory: [{ status, at: now(), by: actor, note: 'Created' }],
@@ -401,10 +404,22 @@ export class BoardStore {
   async activity(since = 0) {
     const checkpoint = eventCursor(since);
     const allEvents = await this.readEvents();
+    const eventById = new Map(allEvents.map((event) => [event.id, event]));
+    const processed = new Set();
+    const addAncestors = (id) => {
+      if (processed.has(id)) return;
+      processed.add(id);
+      for (const parent of eventById.get(id)?.parents || []) addAncestors(parent);
+    };
+    for (const id of checkpoint.eventIds) addAncestors(id);
     const events = checkpoint.eventIds.size
-      ? allEvents.filter((event) => !checkpoint.eventIds.has(event.id))
+      ? allEvents.filter((event) => !processed.has(event.id))
       : allEvents.filter((event) => event.cursor > checkpoint.legacyCursor);
-    const cursor = `v1.${Buffer.from(JSON.stringify(allEvents.map((event) => event.id))).toString('base64url')}`;
+    const heads = allEvents
+      .filter((event) => !allEvents.some((candidate) => candidate.parents?.includes(event.id)))
+      .map((event) => event.id)
+      .sort();
+    const cursor = `v1.${Buffer.from(JSON.stringify(heads)).toString('base64url')}`;
     return { events, cursor };
   }
 

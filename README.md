@@ -18,8 +18,8 @@ npm link
 
 crewboard init --name "Product fleet"
 crewboard create "Design the onboarding flow" --assignee ux-agent --label product --priority high
-crewboard move CB-0001-ab12cd34 active --as ux-agent
-crewboard comment CB-0001-ab12cd34 "Draft is ready for @captain" --as ux-agent
+crewboard move <ticket-id-from-create> active --as ux-agent
+crewboard comment <ticket-id-from-create> "Draft is ready for @captain" --as ux-agent
 crewboard inbox --as captain --since 0 --json
 ```
 
@@ -86,7 +86,7 @@ Crewboard intentionally stores its state in ordinary project files:
   board.json                 board name and lifecycle columns
   events.jsonl               append-only activity stream
   tickets/
-    CB-0001-ab12cd34.md      YAML-compatible frontmatter, body, and message log
+    CB-12345678901234567890.md  YAML-compatible frontmatter, body, and message log
 ```
 
 Ticket metadata includes its ID, title, body, status, assignee, labels, priority, links, status history, and created and updated timestamps. The Markdown ticket also contains its ordered message objects, including author, mentions, reply link, and timestamp. This keeps a ticket self-contained for code review and portable between clones.
@@ -98,7 +98,7 @@ Commit `.crewboard/` with the work it represents. Git resolves independent ticke
 Messages are part of the ticket, not a separate chat stream. That means the relevant decision stays attached to the work even after an agent's context window, terminal session, or branch ends.
 
 ```sh
-crewboard comment CB-0042-ef56ab78 "@api-agent the contract changed. Can you verify the client?" \
+crewboard comment <ticket-id> "@api-agent the contract changed. Can you verify the client?" \
   --as web-agent
 
 # api-agent records the returned cursor and uses it next time.

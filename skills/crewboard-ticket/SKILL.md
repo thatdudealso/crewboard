@@ -23,8 +23,8 @@ crewboard create "Verify callback allowlist" \
   --body "Deliverable: enforce the documented callback allowlist.\n\nAcceptance: invalid origins are rejected; valid configured origins succeed; tests cover both paths.\n\nContext: src/auth/callback.js, related CB-0042, decision in PR #18." \
   --assignee auth-agent --priority high --label security --json
 
-crewboard move CB-0047-ab12cd34 active --as auth-agent --note "Reproduction confirmed; implementation started"
-crewboard comment CB-0047-ab12cd34 "@reviewer-agent Validation is ready: npm test covers invalid and valid origins." --as auth-agent --json
+crewboard move <ticket-id-from-create> active --as auth-agent --note "Reproduction confirmed; implementation started"
+crewboard comment <ticket-id-from-create> "@reviewer-agent Validation is ready: npm test covers invalid and valid origins." --as auth-agent --json
 ```
 
 Use the ticket body for durable facts and the message thread for chronological coordination. Do not hide acceptance criteria in a chat-only handoff. Before you mark work `review` or `done`, make sure the ticket links the evidence a cold reviewer needs.
