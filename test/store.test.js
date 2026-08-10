@@ -158,6 +158,24 @@ test('the next mutation repairs an unfinished event record before appending', as
   assert.deepEqual((await board.activity(0)).events.map((event) => event.cursor), [1, 2]);
 });
 
+test('a complete final event without a newline remains durable', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  await board.createTicket({ title: 'Published event' });
+  await fs.appendFile(path.join(root, '.crewboard', 'events.jsonl'), JSON.stringify({
+    cursor: 2,
+    at: '2026-01-01T00:00:00.000Z',
+    action: 'merged-event',
+    ticketId: null,
+    actor: null,
+    data: {},
+  }));
+
+  assert.deepEqual((await board.activity(0)).events.map((event) => event.action), ['ticket-created', 'merged-event']);
+  await board.createTicket({ title: 'Later event' });
+  assert.deepEqual((await board.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);
+});
+
 test('a ticket can move across projects while preserving its conversation', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });

@@ -182,7 +182,14 @@ export class BoardStore {
   async readEvents() {
     const contents = await fs.readFile(path.join(this.path, 'events.jsonl'), 'utf8');
     const lines = contents.split('\n');
-    if (!contents.endsWith('\n')) lines.pop();
+    if (contents.endsWith('\n')) lines.pop();
+    else {
+      try {
+        JSON.parse(lines.at(-1));
+      } catch {
+        lines.pop();
+      }
+    }
     return lines.filter(Boolean).map((line) => JSON.parse(line));
   }
 
@@ -191,7 +198,13 @@ export class BoardStore {
     const contents = await fs.readFile(eventPath, 'utf8');
     if (contents.endsWith('\n')) return;
     const lastNewline = contents.lastIndexOf('\n');
-    await atomicWriteFile(eventPath, lastNewline < 0 ? '' : contents.slice(0, lastNewline + 1));
+    const finalRecord = contents.slice(lastNewline + 1);
+    try {
+      JSON.parse(finalRecord);
+      await fs.appendFile(eventPath, '\n');
+    } catch {
+      await atomicWriteFile(eventPath, lastNewline < 0 ? '' : contents.slice(0, lastNewline + 1));
+    }
   }
 
   async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, messages = [], position = null, actor = null }) {
