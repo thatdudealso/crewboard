@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { BoardStore } from '../src/store.js';
+import { BoardStore, transferTicket } from '../src/store.js';
 import { temporaryDirectory } from '../test-support/helpers.js';
 
 test('a board persists git-friendly markdown tickets and append-only events', async () => {
@@ -49,6 +49,17 @@ test('a board enforces configured lifecycle columns', async () => {
 
   assert.equal(moved.ticket.status, 'working');
   await assert.rejects(() => board.moveTicket(ticket.id, 'missing'), /Unknown status/);
+});
+
+test('ticket state transitions remain in the ticket status history', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const { ticket } = await board.createTicket({ title: 'Preserve status evidence', actor: 'triage' });
+  await board.moveTicket(ticket.id, 'active', { actor: 'builder', note: 'Implementation started' });
+
+  const persisted = await board.getTicket(ticket.id);
+  assert.deepEqual(persisted.statusHistory.map((entry) => entry.status), ['inbox', 'active']);
+  assert.equal(persisted.statusHistory.at(-1).note, 'Implementation started');
 });
 
 test('open board handles refresh their cursors before recording later mutations', async () => {
@@ -145,4 +156,20 @@ test('the next mutation repairs an unfinished event record before appending', as
   await board.createTicket({ title: 'Recovered event stream' });
 
   assert.deepEqual((await board.activity(0)).events.map((event) => event.cursor), [1, 2]);
+});
+
+test('a ticket can move across projects while preserving its conversation', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const { ticket } = await source.createTicket({ title: 'Move me', body: 'Context travels.', labels: ['handoff'] });
+  await source.addComment(ticket.id, { author: 'builder', body: 'Ready to transfer.' });
+
+  const transferred = await transferTicket(source, destination, ticket.id, { destinationProjectId: 'project-destination', actor: 'captain-web' });
+
+  assert.equal(transferred.ticket.title, 'Move me');
+  assert.equal(transferred.ticket.messages.length, 1);
+  assert.equal((await destination.listTickets()).length, 1);
+  assert.equal((await source.listTickets()).length, 0);
+  assert.equal((await source.getTicket(ticket.id)).transferredTo.ticketId, transferred.ticket.id);
 });

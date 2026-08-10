@@ -18,6 +18,10 @@ function frontmatter(ticket) {
     priority: ticket.priority ?? 'normal',
     links: ticket.links ?? [],
     source: ticket.source ?? null,
+    position: ticket.position ?? 0,
+    archivedAt: ticket.archivedAt ?? null,
+    transferredTo: ticket.transferredTo ?? null,
+    statusHistory: ticket.statusHistory ?? [],
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
   };
@@ -142,7 +146,7 @@ export class BoardStore {
     }
   }
 
-  async listTickets({ status, assignee } = {}) {
+  async listTickets({ status, assignee, includeArchived = false } = {}) {
     let files;
     try {
       files = await fs.readdir(this.ticketsPath);
@@ -151,7 +155,9 @@ export class BoardStore {
       throw error;
     }
     const tickets = await Promise.all(files.filter((file) => file.endsWith('.md')).sort().map((file) => this.getTicket(file.slice(0, -3))));
-    return tickets.filter((ticket) => (!status || ticket.status === status) && (!assignee || ticket.assignee === assignee));
+    return tickets
+      .filter((ticket) => (includeArchived || !ticket.archivedAt) && (!status || ticket.status === status) && (!assignee || ticket.assignee === assignee))
+      .sort((left, right) => (left.position ?? 0) - (right.position ?? 0) || left.id.localeCompare(right.id));
   }
 
   async appendEvent(action, { ticketId = null, actor = null, data = {} } = {}) {
@@ -188,11 +194,11 @@ export class BoardStore {
     await atomicWriteFile(eventPath, lastNewline < 0 ? '' : contents.slice(0, lastNewline + 1));
   }
 
-  async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, actor = null }) {
-    return this.withMutationLock(() => this.createTicketUnlocked({ title, body, status, assignee, labels, priority, links, source, actor }));
+  async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, messages = [], position = null, actor = null }) {
+    return this.withMutationLock(() => this.createTicketUnlocked({ title, body, status, assignee, labels, priority, links, source, messages, position, actor }));
   }
 
-  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, actor = null }) {
+  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, messages = [], position = null, actor = null }) {
     await this.refreshConfig();
     if (!title?.trim()) throw new Error('A ticket title is required.');
     this.assertStatus(status);
@@ -206,9 +212,13 @@ export class BoardStore {
       priority,
       links: cleanList(links),
       source,
+      position: position ?? this.config.nextTicketNumber,
+      archivedAt: null,
+      transferredTo: null,
+      statusHistory: [{ status, at: now(), by: actor, note: 'Created' }],
       createdAt: now(),
       updatedAt: now(),
-      messages: [],
+      messages,
     };
     this.config.nextTicketNumber += 1;
     await this.saveConfig();
@@ -230,6 +240,15 @@ export class BoardStore {
     if (changes.status) this.assertStatus(changes.status);
     const original = { ...ticket };
     Object.assign(ticket, changes);
+    if (changes.status && changes.status !== original.status) {
+      ticket.statusHistory = [...(ticket.statusHistory || []), {
+        status: changes.status,
+        from: original.status,
+        at: now(),
+        by: actor,
+        note: eventData.note || null,
+      }];
+    }
     if (changes.labels) ticket.labels = cleanList(changes.labels);
     if (changes.links) ticket.links = cleanList(changes.links);
     ticket.updatedAt = now();
@@ -258,6 +277,58 @@ export class BoardStore {
       actor,
       eventData: { assignee: assignee || null },
     }));
+  }
+
+  async reorderTickets(ticketIds, { status = null, actor = null } = {}) {
+    return this.withMutationLock(() => this.reorderTicketsUnlocked(ticketIds, { status, actor }));
+  }
+
+  async reorderTicketsUnlocked(ticketIds, { status = null, actor = null } = {}) {
+    if (!Array.isArray(ticketIds) || ticketIds.length === 0) throw new Error('At least one ticket id is required to reorder tickets.');
+    if (new Set(ticketIds).size !== ticketIds.length) throw new Error('Ticket ids must be unique when reordering.');
+    if (status) this.assertStatus(status);
+    const tickets = await Promise.all(ticketIds.map((id) => this.getTicket(id)));
+    if (tickets.some((ticket) => ticket.archivedAt)) throw new Error('Archived tickets cannot be reordered.');
+    for (const [index, ticket] of tickets.entries()) {
+      const previousStatus = ticket.status;
+      if (status) ticket.status = status;
+      if (status && status !== previousStatus) {
+        ticket.statusHistory = [...(ticket.statusHistory || []), {
+          status,
+          from: previousStatus,
+          at: now(),
+          by: actor,
+          note: 'Reordered on board',
+        }];
+      }
+      ticket.position = index + 1;
+      ticket.updatedAt = now();
+      await this.writeTicket(ticket);
+    }
+    const event = await this.appendEvent('tickets-reordered', {
+      actor,
+      data: { status, ticketIds },
+    });
+    return { tickets, event };
+  }
+
+  async archiveTicket(id, { actor = null, transferredTo = null } = {}) {
+    return this.withMutationLock(() => this.archiveTicketUnlocked(id, { actor, transferredTo }));
+  }
+
+  async archiveTicketUnlocked(id, { actor = null, transferredTo = null } = {}) {
+    const ticket = await this.getTicket(id);
+    if (ticket.archivedAt) return { ticket, event: null, unchanged: true };
+    ticket.archivedAt = now();
+    ticket.transferredTo = transferredTo;
+    ticket.updatedAt = ticket.archivedAt;
+    await this.writeTicket(ticket);
+    const event = await this.appendEvent(transferredTo ? 'ticket-transferred' : 'ticket-archived', {
+      ticketId: id,
+      actor,
+      data: { transferredTo },
+    });
+    return { ticket, event, unchanged: false };
   }
 
   async addComment(id, { author, body, mentions = [], replyTo = null }) {
@@ -305,4 +376,44 @@ export class BoardStore {
     const assignments = activity.events.filter((event) => event.action === 'ticket-assigned' && event.actor !== agent && event.data.assignee === agent);
     return { agent, messages, assignments, cursor: activity.cursor };
   }
+}
+
+export async function withBoardMutationLocks(boards, operation) {
+  const uniqueBoards = [...new Map(boards.map((board) => [board.root, board])).values()].sort((left, right) => left.root.localeCompare(right.root));
+  async function acquire(index) {
+    if (index === uniqueBoards.length) return operation();
+    return uniqueBoards[index].withMutationLock(() => acquire(index + 1));
+  }
+  return acquire(0);
+}
+
+export async function transferTicket(sourceBoard, destinationBoard, ticketId, { destinationProjectId = null, actor = null } = {}) {
+  if (sourceBoard.root === destinationBoard.root) throw new Error('Choose a different project when moving a ticket across projects.');
+  return withBoardMutationLocks([sourceBoard, destinationBoard], async () => {
+    await Promise.all([sourceBoard.refreshConfig(), destinationBoard.refreshConfig()]);
+    const sourceTicket = await sourceBoard.getTicket(ticketId);
+    if (sourceTicket.archivedAt) throw new Error(`Ticket is already archived: ${ticketId}`);
+    const created = await destinationBoard.createTicketUnlocked({
+      title: sourceTicket.title,
+      body: sourceTicket.body,
+      status: destinationBoard.config.columns.includes(sourceTicket.status) ? sourceTicket.status : destinationBoard.config.columns[0],
+      assignee: sourceTicket.assignee,
+      labels: sourceTicket.labels,
+      priority: sourceTicket.priority,
+      links: sourceTicket.links,
+      messages: sourceTicket.messages,
+      source: {
+        type: 'crewboard-transfer',
+        projectPath: sourceBoard.root,
+        ticketId: sourceTicket.id,
+        previousSource: sourceTicket.source ?? null,
+      },
+      actor,
+    });
+    const archived = await sourceBoard.archiveTicketUnlocked(ticketId, {
+      actor,
+      transferredTo: { projectId: destinationProjectId, ticketId: created.ticket.id, projectPath: destinationBoard.root },
+    });
+    return { ticket: created.ticket, sourceTicket: archived.ticket, event: created.event };
+  });
 }

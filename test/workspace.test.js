@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { BoardStore } from '../src/store.js';
-import { addBoardToWorkspace, initializeWorkspace, listWorkspace } from '../src/workspace.js';
+import { addBoardToWorkspace, approveWorkspaceProject, discoverProjects, initializeWorkspace, listWorkspace, renameWorkspaceProject, updateWorkspaceProject } from '../src/workspace.js';
 import { temporaryDirectory } from '../test-support/helpers.js';
 
 test('a workspace registers boards and returns a cross-project ticket view', async () => {
@@ -51,4 +51,56 @@ test('a workspace recovers a lock left by a stopped process', async () => {
   await addBoardToWorkspace(workspace, boardPath);
 
   assert.equal((await listWorkspace(workspace)).projects[0].name, 'API');
+});
+
+test('discovered projects retain provenance and wait for captain approval', async () => {
+  const root = await temporaryDirectory();
+  const sourceRoot = path.join(root, 'projects');
+  const discoveredPath = path.join(sourceRoot, 'scoopies');
+  const workspace = path.join(root, 'fleet-workspace.json');
+  await fs.mkdir(path.join(discoveredPath, '.git'), { recursive: true });
+  await initializeWorkspace(workspace);
+
+  const discovery = await discoverProjects(workspace, { source: 'local', root: sourceRoot });
+
+  assert.equal(discovery.sourceFound, true);
+  assert.equal(discovery.discovered.length, 1);
+  assert.equal(discovery.discovered[0].origin, 'local');
+  assert.equal((await listWorkspace(workspace)).projects.length, 0);
+  const approved = await approveWorkspaceProject(workspace, discovery.discovered[0].id);
+  await renameWorkspaceProject(workspace, approved.project.id, 'Scoopies');
+  await updateWorkspaceProject(workspace, approved.project.id, { organization: 'Fleet work' });
+
+  const listed = await listWorkspace(workspace);
+  assert.equal(listed.projects[0].name, 'Scoopies');
+  assert.equal(listed.projects[0].origin, 'local');
+  assert.equal(listed.projects[0].organization, 'Fleet work');
+  assert.equal(listed.pendingProjects.length, 0);
+  assert.equal((await BoardStore.open(discoveredPath)).config.name, 'scoopies');
+});
+
+test('an unavailable ChatGPT export reports a real no-source state', async () => {
+  const root = await temporaryDirectory();
+  const workspace = path.join(root, 'fleet-workspace.json');
+  await initializeWorkspace(workspace);
+
+  const discovery = await discoverProjects(workspace, { source: 'chatgpt', root: path.join(root, 'missing-export.json') });
+
+  assert.equal(discovery.sourceFound, false);
+  assert.deepEqual(discovery.discovered, []);
+  assert.equal((await listWorkspace(workspace)).pendingProjects.length, 0);
+});
+
+test('a local ChatGPT export becomes pending project records with chatgpt provenance', async () => {
+  const root = await temporaryDirectory();
+  const workspace = path.join(root, 'fleet-workspace.json');
+  const exportPath = path.join(root, 'chatgpt-projects.json');
+  await fs.writeFile(exportPath, JSON.stringify({ projects: [{ name: 'Research notes' }] }));
+  await initializeWorkspace(workspace);
+
+  const discovery = await discoverProjects(workspace, { source: 'chatgpt', root: exportPath });
+
+  assert.equal(discovery.sourceFound, true);
+  assert.equal(discovery.discovered[0].origin, 'chatgpt');
+  assert.equal((await listWorkspace(workspace)).pendingProjects[0].name, 'Research notes');
 });

@@ -4,7 +4,18 @@ import { BoardStore } from './store.js';
 import { assignTicket, createTicket, moveTicket, postMessage } from './lifecycle.js';
 import { importTasksAxi } from './importer.js';
 import { findBoardRoot, normalizeBoardRoot, summarize } from './utils.js';
-import { addBoardToWorkspace, initializeWorkspace, listWorkspace } from './workspace.js';
+import {
+  addBoardToWorkspace,
+  approveWorkspaceProject,
+  arrangeWorkspaceProject,
+  createWorkspaceProject,
+  discoverProjects,
+  initializeWorkspace,
+  listWorkspace,
+  renameWorkspaceProject,
+  updateWorkspaceProject,
+} from './workspace.js';
+import { startWebServer } from './web.js';
 
 export const usage = `crewboard - a git-native coordination board for agent fleets
 
@@ -19,8 +30,16 @@ Usage:
   crewboard inbox --as <agent> [--since <cursor>]
   crewboard activity [--since <cursor>]
   crewboard import tasks-axi <backlog.md> [--as <agent>]
+  crewboard web [--workspace <workspace.json>] [--port <port>]
   crewboard workspace init [--file <workspace.json>]
   crewboard workspace add <board-path> [--file <workspace.json>]
+  crewboard workspace create <name> --path <board-path> [--organization <name>]
+  crewboard workspace discover <local|claude|chatgpt> [--root <path>]
+  crewboard workspace approve <project-id> [--path <board-path>]
+  crewboard workspace rename <project-id> <name>
+  crewboard workspace archive|restore <project-id>
+  crewboard workspace organize <project-id> <organization>
+  crewboard workspace arrange <project-id> <up|down>
   crewboard workspace list [--file <workspace.json>]
 
 All commands accept --json. Board commands also accept --board <project-path>.`;
@@ -91,23 +110,65 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
     return render({ board: board.config, path: board.root }, { json, human: (result) => `Initialized ${result.board.name} at ${result.path}` });
   }
 
+  if (command === 'web') {
+    const port = options.port === undefined ? undefined : Number(options.port);
+    if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('Web port must be an integer from 0 to 65535.');
+    const result = await startWebServer({ cwd, workspaceFile: options.workspace || 'crewboard-workspace.json', port });
+    return render({ url: result.url, workspaceFile: result.workspaceFile }, { json, human: (value) => `Crewboard web is listening at ${value.url}\nWorkspace: ${value.workspaceFile}` });
+  }
+
   if (command === 'workspace') {
-    const [workspaceCommand, boardPath] = arguments_;
+    const [workspaceCommand, firstArgument, secondArgument] = arguments_;
     const filePath = workspacePath(options, cwd);
     if (workspaceCommand === 'init') {
       const result = await initializeWorkspace(filePath);
       return render(result, { json, human: (value) => `Initialized workspace at ${value.filePath}` });
     }
     if (workspaceCommand === 'add') {
-      if (!boardPath) throw new Error('Usage: crewboard workspace add <board-path>.');
-      const result = await addBoardToWorkspace(filePath, path.resolve(cwd, boardPath));
+      if (!firstArgument) throw new Error('Usage: crewboard workspace add <board-path>.');
+      const result = await addBoardToWorkspace(filePath, path.resolve(cwd, firstArgument));
       return render(result, { json, human: (value) => value.unchanged ? `${value.project.name} is already registered.` : `Registered ${value.project.name}.` });
+    }
+    if (workspaceCommand === 'create') {
+      if (!firstArgument || !options.path) throw new Error('Usage: crewboard workspace create <name> --path <board-path>.');
+      const result = await createWorkspaceProject(filePath, { name: firstArgument, boardPath: path.resolve(cwd, options.path), organization: options.organization });
+      return render(result, { json, human: (value) => `Created project ${value.project.name}.` });
+    }
+    if (workspaceCommand === 'discover') {
+      if (!firstArgument) throw new Error('Usage: crewboard workspace discover <local|claude|chatgpt> [--root <path>].');
+      const result = await discoverProjects(filePath, { source: firstArgument, root: options.root || undefined });
+      return render(result, { json, human: (value) => value.sourceFound ? `Found ${value.discovered.length} project candidate(s) awaiting approval.` : `No ${value.source} source found.` });
+    }
+    if (workspaceCommand === 'approve') {
+      if (!firstArgument) throw new Error('Usage: crewboard workspace approve <project-id> [--path <board-path>].');
+      const result = await approveWorkspaceProject(filePath, firstArgument, { boardPath: options.path || null });
+      return render(result, { json, human: (value) => `Approved ${value.project.name}.` });
+    }
+    if (workspaceCommand === 'rename') {
+      if (!firstArgument || !secondArgument) throw new Error('Usage: crewboard workspace rename <project-id> <name>.');
+      const result = await renameWorkspaceProject(filePath, firstArgument, secondArgument);
+      return render(result, { json, human: (value) => `Renamed project to ${value.project.name}.` });
+    }
+    if (workspaceCommand === 'archive' || workspaceCommand === 'restore') {
+      if (!firstArgument) throw new Error(`Usage: crewboard workspace ${workspaceCommand} <project-id>.`);
+      const result = await updateWorkspaceProject(filePath, firstArgument, { state: workspaceCommand === 'archive' ? 'archived' : 'active' });
+      return render(result, { json, human: (value) => `${workspaceCommand === 'archive' ? 'Archived' : 'Restored'} ${value.project.name}.` });
+    }
+    if (workspaceCommand === 'organize') {
+      if (!firstArgument || !secondArgument) throw new Error('Usage: crewboard workspace organize <project-id> <organization>.');
+      const result = await updateWorkspaceProject(filePath, firstArgument, { organization: secondArgument });
+      return render(result, { json, human: (value) => `Organized ${value.project.name} in ${value.project.organization}.` });
+    }
+    if (workspaceCommand === 'arrange') {
+      if (!firstArgument || !secondArgument) throw new Error('Usage: crewboard workspace arrange <project-id> <up|down>.');
+      const result = await arrangeWorkspaceProject(filePath, firstArgument, secondArgument);
+      return render(result, { json, human: (value) => value.unchanged ? `${value.project.name} is already at that edge.` : `Arranged ${value.project.name}.` });
     }
     if (workspaceCommand === 'list') {
       const result = await listWorkspace(filePath);
       return render(result, { json, human: (value) => value.projects.length ? value.projects.map((project) => `${project.name}  ${project.tickets.length} ticket(s)  ${project.path}`).join('\n') : 'Workspace has no boards.' });
     }
-    throw new Error('Usage: crewboard workspace <init|add|list>.');
+    throw new Error('Usage: crewboard workspace <init|add|create|discover|approve|rename|archive|restore|organize|arrange|list>.');
   }
 
   const root = await resolveBoard(options, cwd);
