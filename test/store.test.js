@@ -173,3 +173,23 @@ test('a ticket can move across projects while preserving its conversation', asyn
   assert.equal((await source.listTickets()).length, 0);
   assert.equal((await source.getTicket(ticket.id)).transferredTo.ticketId, transferred.ticket.id);
 });
+
+test('a failed source archival leaves a recoverable inactive transfer copy', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const { ticket } = await source.createTicket({ title: 'Recover transfer' });
+  const archiveTicketUnlocked = source.archiveTicketUnlocked.bind(source);
+  source.archiveTicketUnlocked = async () => { throw new Error('Source write failed.'); };
+
+  await assert.rejects(() => transferTicket(source, destination, ticket.id), /Source write failed/);
+  assert.equal((await source.listTickets()).length, 1);
+  assert.equal((await destination.listTickets()).length, 0);
+  assert.equal((await destination.listTickets({ includeArchived: true })).length, 1);
+
+  source.archiveTicketUnlocked = archiveTicketUnlocked;
+  const transferred = await transferTicket(source, destination, ticket.id);
+  assert.equal((await source.listTickets()).length, 0);
+  assert.equal((await destination.listTickets()).length, 1);
+  assert.equal(transferred.ticket.title, 'Recover transfer');
+});

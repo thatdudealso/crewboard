@@ -340,6 +340,10 @@ export async function updateWorkspaceProject(filePath, projectId, { organization
     if (organization !== undefined) project.organization = organization.trim() || 'Unsorted';
     if (state !== undefined) {
       if (!['active', 'archived', 'pending'].includes(state)) throw new Error('Project state must be active, archived, or pending.');
+      if (state === 'pending') throw new Error('Projects can only become pending through discovery or import.');
+      if (project.state === 'pending') throw new Error('Pending projects must be approved before they can be archived or restored.');
+      if (state === 'active' && project.state !== 'archived') throw new Error('Only archived projects can be restored.');
+      if (state === 'archived' && project.state !== 'active') throw new Error('Only active projects can be archived.');
       project.state = state;
       project.archivedAt = state === 'archived' ? now() : null;
     }

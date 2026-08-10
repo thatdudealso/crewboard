@@ -67,6 +67,8 @@ test('discovered projects retain provenance and wait for captain approval', asyn
   assert.equal(discovery.discovered.length, 1);
   assert.equal(discovery.discovered[0].origin, 'local');
   assert.equal((await listWorkspace(workspace)).projects.length, 0);
+  await assert.rejects(() => updateWorkspaceProject(workspace, discovery.discovered[0].id, { state: 'active' }), /must be approved/);
+  assert.equal((await listWorkspace(workspace)).pendingProjects.length, 1);
   const approved = await approveWorkspaceProject(workspace, discovery.discovered[0].id);
   await renameWorkspaceProject(workspace, approved.project.id, 'Scoopies');
   await updateWorkspaceProject(workspace, approved.project.id, { organization: 'Fleet work' });
@@ -77,6 +79,19 @@ test('discovered projects retain provenance and wait for captain approval', asyn
   assert.equal(listed.projects[0].organization, 'Fleet work');
   assert.equal(listed.pendingProjects.length, 0);
   assert.equal((await BoardStore.open(discoveredPath)).config.name, 'scoopies');
+});
+
+test('only approved archived projects can be restored', async () => {
+  const root = await temporaryDirectory();
+  const boardPath = path.join(root, 'project');
+  const workspace = path.join(root, 'fleet-workspace.json');
+  await BoardStore.initialize(boardPath, { name: 'Project' });
+  await initializeWorkspace(workspace);
+  const project = (await addBoardToWorkspace(workspace, boardPath)).project;
+
+  await updateWorkspaceProject(workspace, project.id, { state: 'archived' });
+  await updateWorkspaceProject(workspace, project.id, { state: 'active' });
+  await assert.rejects(() => updateWorkspaceProject(workspace, project.id, { state: 'active' }), /Only archived projects can be restored/);
 });
 
 test('an unavailable ChatGPT export reports a real no-source state', async () => {
