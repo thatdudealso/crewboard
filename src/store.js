@@ -31,16 +31,21 @@ function serializeTicket(ticket) {
 }
 
 function parseTicket(contents, filePath) {
-  const match = contents.match(/^---\n([\s\S]*?)\n---\n\n?([\s\S]*?)\n?<!-- crewboard-messages\n([\s\S]*?)\n-->\s*$/);
-  if (!match) throw new Error(`Invalid Crewboard ticket file: ${filePath}`);
+  const header = contents.match(/^---\n([\s\S]*?)\n---\n\n?/);
+  const footer = '\n<!-- crewboard-messages\n';
+  const footerIndex = contents.lastIndexOf(footer);
+  const footerEnd = '\n-->\n';
+  if (!header || footerIndex < header[0].length || !contents.endsWith(footerEnd)) throw new Error(`Invalid Crewboard ticket file: ${filePath}`);
   const values = {};
-  for (const line of match[1].split('\n')) {
+  for (const line of header[1].split('\n')) {
     const separator = line.indexOf(': ');
     if (separator < 1) throw new Error(`Invalid frontmatter in ${filePath}`);
     const key = line.slice(0, separator);
     values[key] = JSON.parse(line.slice(separator + 2));
   }
-  return { ...values, body: match[2].trim(), messages: JSON.parse(match[3]) };
+  const messageStart = footerIndex + footer.length;
+  const messageEnd = contents.length - footerEnd.length;
+  return { ...values, body: contents.slice(header[0].length, footerIndex).trim(), messages: JSON.parse(contents.slice(messageStart, messageEnd)) };
 }
 
 function ticketFileName(ticketId) {
@@ -50,24 +55,28 @@ function ticketFileName(ticketId) {
 
 export class BoardStore {
   static async initialize(root, { name = path.basename(root), columns = DEFAULT_COLUMNS } = {}) {
-    const boardPath = path.join(root, BOARD_DIRECTORY);
-    if (await pathExists(boardPath)) throw new Error(`Crewboard already exists at ${boardPath}`);
-    const cleanColumns = cleanList(columns);
-    if (cleanColumns.length < 2) throw new Error('A board needs at least two status columns.');
-    const timestamp = now();
-    const config = {
-      schemaVersion: 1,
-      name,
-      columns: cleanColumns,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      nextTicketNumber: 1,
-      lastEventCursor: 0,
-    };
-    await fs.mkdir(path.join(boardPath, 'tickets'), { recursive: true });
-    await atomicWriteFile(path.join(boardPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
-    await fs.writeFile(path.join(boardPath, 'events.jsonl'), '');
-    return new BoardStore(root, config);
+    const absoluteRoot = path.resolve(root);
+    const boardPath = path.join(absoluteRoot, BOARD_DIRECTORY);
+    await fs.mkdir(absoluteRoot, { recursive: true });
+    return withFileLock(path.join(absoluteRoot, '.crewboard.init.lock'), 'Crewboard is busy with initialization. Retry the command.', async () => {
+      if (await pathExists(boardPath)) throw new Error(`Crewboard already exists at ${boardPath}`);
+      const cleanColumns = cleanList(columns);
+      if (cleanColumns.length < 2) throw new Error('A board needs at least two status columns.');
+      const timestamp = now();
+      const config = {
+        schemaVersion: 1,
+        name,
+        columns: cleanColumns,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        nextTicketNumber: 1,
+        lastEventCursor: 0,
+      };
+      await fs.mkdir(path.join(boardPath, 'tickets'), { recursive: true });
+      await atomicWriteFile(path.join(boardPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
+      await fs.writeFile(path.join(boardPath, 'events.jsonl'), '');
+      return new BoardStore(absoluteRoot, config);
+    });
   }
 
   static async open(root) {

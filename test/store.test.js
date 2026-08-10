@@ -32,6 +32,15 @@ test('a board persists git-friendly markdown tickets and append-only events', as
   assert.deepEqual((await reopened.activity(0)).events.map((item) => item.action), ['ticket-created']);
 });
 
+test('a ticket body can contain the reserved message marker literally', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const body = 'Keep <!-- crewboard-messages\nthis literal marker in Markdown.';
+  const { ticket } = await board.createTicket({ title: 'Document storage syntax', body });
+
+  assert.equal((await board.getTicket(ticket.id)).body, body);
+});
+
 test('a board enforces configured lifecycle columns', async () => {
   const root = await temporaryDirectory();
   const board = await BoardStore.initialize(root, { columns: ['queued', 'working', 'shipped'] });
@@ -63,6 +72,20 @@ test('simultaneous agents receive unique ticket IDs and activity cursors', async
   assert.deepEqual(created.map((result) => result.ticket.id).sort(), ['CB-0001', 'CB-0002', 'CB-0003', 'CB-0004', 'CB-0005']);
   const board = await BoardStore.open(root);
   assert.deepEqual((await board.activity()).events.map((event) => event.cursor), [1, 2, 3, 4, 5]);
+});
+
+test('simultaneous board initialization has one successful owner', async () => {
+  const root = await temporaryDirectory();
+
+  const attempts = await Promise.allSettled([
+    BoardStore.initialize(root, { name: 'First board' }),
+    BoardStore.initialize(root, { name: 'Second board' }),
+  ]);
+
+  assert.equal(attempts.filter((attempt) => attempt.status === 'fulfilled').length, 1);
+  assert.equal(attempts.filter((attempt) => attempt.status === 'rejected').length, 1);
+  assert.match(attempts.find((attempt) => attempt.status === 'rejected').reason.message, /Crewboard already exists/);
+  assert.ok((await BoardStore.open(root)).config.name === 'First board' || (await BoardStore.open(root)).config.name === 'Second board');
 });
 
 test('activity derives its polling cursor from durable events', async () => {
