@@ -6,6 +6,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - `README.md` is the public CLI and storage contract; keep it aligned with `src/cli.js` when commands change.
 - Board data is intentionally tracked in `.crewboard/`; do not add it to `.gitignore`.
 - The always-on fleet rollout contract is `agents/crewboard-fleet-contract.md`; apply `skills/crewboard-ticket/SKILL.md` whenever project work creates or updates a ticket.
+- Captain GitHub attention: `crewboard github attention` / web **GitHub attention** view; config is `githubAttention` in the workspace file (see README). Server fetches via local `gh`; never treat an unavailable GitHub source as an empty all-clear.
 
 ## Maintaining this file
 

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "name": "crewboard attention",
+  "columns": [
+    "inbox",
+    "ready",
+    "active",
+    "review",
+    "done"
+  ],
+  "createdAt": "2026-08-10T23:04:34.988Z",
+  "updatedAt": "2026-08-10T23:04:34.988Z",
+  "nextTicketNumber": 1,
+  "lastEventCursor": 0
+}

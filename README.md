@@ -38,6 +38,38 @@ Open the URL printed by the command. The board refreshes every two seconds while
 
 The visual board is a controller, not a second product. Ticket mutations write to the same `.crewboard/` ticket files and mergeable activity records that agents use; workspace project controls write to the selected workspace file.
 
+## GitHub attention (captain)
+
+The captain can see what on GitHub needs them without leaving the board. Crewboard fetches server-side through the locally authenticated GitHub CLI (`gh`); the web UI never embeds tokens or loads external network assets.
+
+Configure repositories in the workspace file:
+
+```json
+{
+  "schemaVersion": 2,
+  "githubAttention": {
+    "repos": [
+      "thatdudealso/Pet_Diary_APP",
+      "thatdudealso/crewboard"
+    ],
+    "login": "thatdudealso"
+  },
+  "projects": []
+}
+```
+
+`repos` is the explicit watch list. Approved workspace projects whose `origin` remotes point at GitHub are also auto-suggested and merged into the watch set. `login` is optional; when omitted, Crewboard uses `gh api user`.
+
+```sh
+crewboard github attention --workspace fleet-workspace.json --json
+crewboard github attention --all --workspace fleet-workspace.json
+crewboard web --workspace fleet-workspace.json
+```
+
+Default output is the attention subset: review requested of the captain, the captain's mergeable-and-green PRs awaiting merge, conflicts or failing checks on the captain's PRs, plus issues/PRs assigned to or mentioning the captain. `--all` (CLI) or **Show all open items** (web) includes every open PR collected for those repos. Each item links to its GitHub URL and reports draft, review, mergeable, and CI state.
+
+If `gh` is missing, unauthenticated, or GitHub is unreachable, both CLI and web report an honest unavailable / no-source state — never an empty all-clear. The web **GitHub attention** view loads on demand with a manual Refresh control and last-refreshed timestamp; board rendering never waits on GitHub.
+
 ## How a fleet coordinates
 
 1. An intake, build, review, or follow-up becomes a ticket.
@@ -73,6 +105,7 @@ Every command accepts `--json`, which writes one structured JSON result to stdou
 | `crewboard activity [--since <cursor>]` | Poll every board event after a cursor. |
 | `crewboard import tasks-axi <backlog.md> [--as <agent>]` | Import and synchronize a tasks-axi Markdown backlog. |
 | `crewboard web [--workspace <file>] [--port <port>]` | Start the local captain-facing dark web board. |
+| `crewboard github attention [--all] [--workspace <file>]` | Captain GitHub attention feed (PRs/issues needing review or action). |
 | `crewboard workspace init\|add\|create\|discover\|approve\|rename\|archive\|restore\|organize\|arrange\|list [--file <path>]` | Manage project approval, provenance, organization, and cross-project views. |
 
 The default lifecycle is `inbox`, `ready`, `active`, `review`, and `done`. Set another comma-separated list at initialization when a project needs a different flow.
