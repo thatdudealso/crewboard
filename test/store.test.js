@@ -19,7 +19,7 @@ test('a board persists git-friendly markdown tickets and append-only events', as
     actor: 'captain',
   });
 
-  assert.match(ticket.id, /^CB-\d{20,}$/);
+  assert.match(ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
   assert.deepEqual(ticket.labels, ['release', 'agent']);
   assert.equal(event.cursor, 1);
   const persisted = await fs.readFile(path.join(root, '.crewboard', 'tickets', `${ticket.id}.md`), 'utf8');
@@ -71,7 +71,7 @@ test('open board handles refresh their cursors before recording later mutations'
   await secondHandle.addComment(first.ticket.id, { author: 'worker', body: 'A durable update.' });
   const second = await firstHandle.createTicket({ title: 'Second task' });
 
-  assert.match(second.ticket.id, /^CB-\d{20,}$/);
+  assert.match(second.ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
   assert.deepEqual((await firstHandle.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);
 });
 
@@ -82,7 +82,7 @@ test('simultaneous agents receive unique ticket IDs and activity cursors', async
   const created = await Promise.all(handles.map((board, index) => board.createTicket({ title: `Concurrent task ${index + 1}` })));
 
   assert.equal(new Set(created.map((result) => result.ticket.id)).size, 5);
-  assert.ok(created.every((result) => /^CB-\d{20,}$/.test(result.ticket.id)));
+  assert.ok(created.every((result) => /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/.test(result.ticket.id)));
   const board = await BoardStore.open(root);
   assert.deepEqual((await board.activity()).events.map((event) => event.cursor), [1, 2, 3, 4, 5]);
 });
@@ -122,7 +122,7 @@ test('a board recovers a mutation lock left by a stopped process', async () => {
 
   const { ticket } = await board.createTicket({ title: 'Recover mutations' });
 
-  assert.match(ticket.id, /^CB-\d{20,}$/);
+  assert.match(ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
 });
 
 test('a board recovers an orphaned stale-lock recovery sentinel', async () => {
@@ -134,7 +134,7 @@ test('a board recovers an orphaned stale-lock recovery sentinel', async () => {
 
   const { ticket } = await board.createTicket({ title: 'Recover handoff' });
 
-  assert.match(ticket.id, /^CB-\d{20,}$/);
+  assert.match(ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
 });
 
 test('activity ignores an unfinished trailing event record', async () => {

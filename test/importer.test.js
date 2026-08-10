@@ -35,6 +35,17 @@ test('tasks-axi markdown is imported and syncs idempotently', async () => {
   assert.equal((await board.getTicket(first.imported[0].id)).status, 'done');
 });
 
+test('imported tasks-axi tickets receive short ids and stay idempotent', async () => {
+  const root = await temporaryDirectory();
+  const source = path.join(root, 'backlog.md');
+  await fs.writeFile(source, '- [ ] crewboard-build - Build the board (kind: ship)\n');
+  const board = await BoardStore.initialize(root);
+  const first = await importTasksAxi(board, source);
+  assert.match(first.imported[0].id, /^build-the-board-[a-f0-9]{4}$/);
+  const second = await importTasksAxi(board, source);
+  assert.equal(second.unchanged[0].id, first.imported[0].id);
+});
+
 test('simultaneous imports create each source task once', async () => {
   const root = await temporaryDirectory();
   const source = path.join(root, 'backlog.md');
