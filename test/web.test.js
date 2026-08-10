@@ -30,6 +30,13 @@ test('the local web controller creates and moves tickets through the shared work
       body: 'Acceptance: preserve the threaded handoff.',
       status: 'inbox',
     });
+    const emptyTitle = await fetch(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '' }),
+    });
+    assert.equal(emptyTitle.status, 400);
+    assert.match((await emptyTitle.json()).error.message, /ticket title is required/i);
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/messages`, 'POST', { body: 'Ready to hand off.' });
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/transfer`, 'POST', {
       destinationProjectId: destination.project.id,

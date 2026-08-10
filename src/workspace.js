@@ -32,6 +32,7 @@ function normalizeProject(project, index) {
     boardPath,
     origin: project.origin || 'manual',
     sourceLocation: project.sourceLocation || null,
+    sourceId: project.sourceId || null,
     state: project.state || 'active',
     organization: project.organization || 'Unsorted',
     position: Number.isFinite(project.position) ? project.position : index + 1,
@@ -71,7 +72,7 @@ async function openWorkspaceUnlocked(filePath) {
 }
 
 function projectKey(project) {
-  return `${project.origin}:${project.path || project.sourceLocation || project.name}`;
+  return `${project.origin}:${project.path || project.sourceLocation || ''}:${project.sourceId || project.name}`;
 }
 
 function sortProjects(projects) {
@@ -166,6 +167,7 @@ function extractChatGptProjects(exported) {
     boardPath: candidate.path || candidate.localPath || candidate.directory || null,
     origin: 'chatgpt',
     sourceLocation: null,
+    sourceId: String(candidate.id ?? candidate.uuid ?? candidate.project_id ?? index + 1),
   }));
 }
 
@@ -275,7 +277,7 @@ export async function discoverProjects(filePath, options) {
     for (const candidate of discovery.candidates) {
       const normalized = normalizeProject({
         ...candidate,
-        id: generatedProjectId(`${candidate.origin}:${candidate.path || candidate.sourceLocation}:${candidate.name}`),
+        id: generatedProjectId(`${candidate.origin}:${candidate.path || candidate.sourceLocation}:${candidate.sourceId || candidate.name}`),
         state: 'pending',
         organization: 'Unsorted',
         position: Math.max(0, ...workspace.projects.map((project) => project.position || 0)) + added.length + 1,

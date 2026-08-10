@@ -237,6 +237,10 @@ export class BoardStore {
 
   async updateTicketUnlocked(id, changes, { action = 'ticket-updated', actor = null, eventData = {} } = {}) {
     const ticket = await this.getTicket(id);
+    if (changes.title !== undefined) {
+      if (typeof changes.title !== 'string' || !changes.title.trim()) throw new Error('A ticket title is required.');
+      changes.title = changes.title.trim();
+    }
     if (changes.status) this.assertStatus(changes.status);
     const original = { ...ticket };
     Object.assign(ticket, changes);

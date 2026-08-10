@@ -106,16 +106,18 @@ test('an unavailable ChatGPT export reports a real no-source state', async () =>
   assert.equal((await listWorkspace(workspace)).pendingProjects.length, 0);
 });
 
-test('a local ChatGPT export becomes pending project records with chatgpt provenance', async () => {
+test('a local ChatGPT export preserves every pending project candidate', async () => {
   const root = await temporaryDirectory();
   const workspace = path.join(root, 'fleet-workspace.json');
   const exportPath = path.join(root, 'chatgpt-projects.json');
-  await fs.writeFile(exportPath, JSON.stringify({ projects: [{ name: 'Research notes' }] }));
+  await fs.writeFile(exportPath, JSON.stringify({ projects: [{ name: 'Research notes' }, { name: 'Release plan' }] }));
   await initializeWorkspace(workspace);
 
   const discovery = await discoverProjects(workspace, { source: 'chatgpt', root: exportPath });
 
   assert.equal(discovery.sourceFound, true);
-  assert.equal(discovery.discovered[0].origin, 'chatgpt');
-  assert.equal((await listWorkspace(workspace)).pendingProjects[0].name, 'Research notes');
+  assert.deepEqual(discovery.discovered.map((project) => project.name), ['Research notes', 'Release plan']);
+  assert.deepEqual(discovery.discovered.map((project) => project.origin), ['chatgpt', 'chatgpt']);
+  assert.equal((await discoverProjects(workspace, { source: 'chatgpt', root: exportPath })).discovered.length, 0);
+  assert.equal((await listWorkspace(workspace)).pendingProjects.length, 2);
 });
