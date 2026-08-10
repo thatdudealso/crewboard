@@ -406,17 +406,19 @@ export class BoardStore {
     const allEvents = await this.readEvents();
     const eventById = new Map(allEvents.map((event) => [event.id, event]));
     const processed = new Set();
-    const addAncestors = (id) => {
-      if (processed.has(id)) return;
+    const pending = [...checkpoint.eventIds];
+    while (pending.length) {
+      const id = pending.pop();
+      if (processed.has(id)) continue;
       processed.add(id);
-      for (const parent of eventById.get(id)?.parents || []) addAncestors(parent);
-    };
-    for (const id of checkpoint.eventIds) addAncestors(id);
+      pending.push(...(eventById.get(id)?.parents || []));
+    }
     const events = checkpoint.eventIds.size
       ? allEvents.filter((event) => !processed.has(event.id))
       : allEvents.filter((event) => event.cursor > checkpoint.legacyCursor);
+    const parentIds = new Set(allEvents.flatMap((event) => event.parents || []));
     const heads = allEvents
-      .filter((event) => !allEvents.some((candidate) => candidate.parents?.includes(event.id)))
+      .filter((event) => !parentIds.has(event.id))
       .map((event) => event.id)
       .sort();
     const cursor = `v1.${Buffer.from(JSON.stringify(heads)).toString('base64url')}`;

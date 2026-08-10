@@ -219,6 +219,25 @@ test('an activity checkpoint remains compact after sequential mutations', async 
   assert.deepEqual((await board.activity(checkpoint)).events, []);
 });
 
+test('an activity checkpoint handles a deep event ancestry', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const events = Array.from({ length: 20_000 }, (_, index) => ({
+    id: `e-${index + 1}`,
+    parents: index ? [`e-${index}`] : [],
+    cursor: index + 1,
+    at: '2026-01-01T00:00:00.000Z',
+    action: 'ticket-created',
+    ticketId: null,
+    actor: null,
+    data: {},
+  }));
+  await fs.writeFile(path.join(root, '.crewboard', 'events.jsonl'), `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
+  const checkpoint = `v1.${Buffer.from(JSON.stringify(['e-20000'])).toString('base64url')}`;
+
+  assert.deepEqual((await board.activity(checkpoint)).events, []);
+});
+
 test('a ticket can move across projects while preserving its conversation', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
