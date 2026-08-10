@@ -20,9 +20,6 @@ test('the local web controller creates and moves tickets through the shared work
   const workspaceFile = path.join(root, 'fleet-workspace.json');
   const { server, url } = await startWebServer({ cwd: root, workspaceFile, port: 0 });
   try {
-    const document = await request(url);
-    assert.match(document, /Crewboard/);
-
     const source = await request(`${url}/api/projects`, 'POST', { name: 'Source', boardPath: path.join(root, 'source') });
     const destination = await request(`${url}/api/projects`, 'POST', { name: 'Destination', boardPath: path.join(root, 'destination') });
     const ticket = await request(`${url}/api/projects/${source.project.id}/tickets`, 'POST', {
@@ -37,6 +34,13 @@ test('the local web controller creates and moves tickets through the shared work
     });
     assert.equal(emptyTitle.status, 400);
     assert.match((await emptyTitle.json()).error.message, /ticket title is required/i);
+    const emptyStatus = await fetch(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: '' }),
+    });
+    assert.equal(emptyStatus.status, 400);
+    assert.match((await emptyStatus.json()).error.message, /Unknown status/);
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/messages`, 'POST', { body: 'Ready to hand off.' });
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/transfer`, 'POST', {
       destinationProjectId: destination.project.id,

@@ -241,10 +241,10 @@ export class BoardStore {
       if (typeof changes.title !== 'string' || !changes.title.trim()) throw new Error('A ticket title is required.');
       changes.title = changes.title.trim();
     }
-    if (changes.status) this.assertStatus(changes.status);
+    if (changes.status !== undefined) this.assertStatus(changes.status);
     const original = { ...ticket };
     Object.assign(ticket, changes);
-    if (changes.status && changes.status !== original.status) {
+    if (changes.status !== undefined && changes.status !== original.status) {
       ticket.statusHistory = [...(ticket.statusHistory || []), {
         status: changes.status,
         from: original.status,
