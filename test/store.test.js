@@ -78,3 +78,13 @@ test('activity derives its polling cursor from durable events', async () => {
   assert.equal(activity.cursor, 1);
   assert.equal(activity.events[0].action, 'ticket-created');
 });
+
+test('a board recovers a mutation lock left by a stopped process', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  await fs.writeFile(path.join(root, '.crewboard', '.mutation.lock'), JSON.stringify({ pid: 2147483647, createdAt: '2000-01-01T00:00:00.000Z' }));
+
+  const { ticket } = await board.createTicket({ title: 'Recover mutations' });
+
+  assert.equal(ticket.id, 'CB-0001');
+});

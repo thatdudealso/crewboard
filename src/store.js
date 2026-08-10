@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { withFileLock } from './lock.js';
 import { DEFAULT_COLUMNS, cleanList, eventCursor, mentionsIn, now, pathExists } from './utils.js';
 
 const BOARD_DIRECTORY = '.crewboard';
@@ -92,26 +93,7 @@ export class BoardStore {
 
   async withMutationLock(operation) {
     const lockPath = path.join(this.path, '.mutation.lock');
-    const deadline = Date.now() + 5_000;
-    let handle;
-    while (!handle) {
-      try {
-        handle = await fs.open(lockPath, 'wx');
-        await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: now() }));
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        if (Date.now() >= deadline) throw new Error('Crewboard is busy with another mutation. Retry the command.');
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-    }
-    try {
-      return await operation();
-    } finally {
-      await handle.close();
-      await fs.unlink(lockPath).catch((error) => {
-        if (error.code !== 'ENOENT') throw error;
-      });
-    }
+    return withFileLock(lockPath, 'Crewboard is busy with another mutation. Retry the command.', operation);
   }
 
   async saveConfig() {
@@ -258,12 +240,16 @@ export class BoardStore {
     if (!author?.trim()) throw new Error('A comment author is required. Pass --as <agent-name>.');
     if (!body?.trim()) throw new Error('A comment body is required.');
     const ticket = await this.getTicket(id);
+    const replyTarget = replyTo?.trim() || null;
+    if (replyTarget && !ticket.messages.some((message) => message.id === replyTarget)) {
+      throw new Error(`Reply target not found: ${replyTarget}`);
+    }
     const message = {
       id: `m-${String(ticket.messages.length + 1).padStart(3, '0')}-${crypto.randomUUID().slice(0, 8)}`,
       author: author.trim(),
       body: body.trim(),
       mentions: cleanList([...mentions, ...mentionsIn(body)]),
-      replyTo: replyTo || null,
+      replyTo: replyTarget,
       createdAt: now(),
     };
     ticket.messages.push(message);

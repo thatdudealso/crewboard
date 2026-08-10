@@ -1,33 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { withFileLock } from './lock.js';
 import { BoardStore } from './store.js';
 import { pathExists } from './utils.js';
 
-async function withWorkspaceLock(filePath, operation) {
-  const lockPath = `${filePath}.lock`;
-  const deadline = Date.now() + 5_000;
-  let handle;
-  while (!handle) {
-    try {
-      handle = await fs.open(lockPath, 'wx');
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      if (Date.now() >= deadline) throw new Error('Workspace is busy with another mutation. Retry the command.');
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  }
-  try {
-    return await operation();
-  } finally {
-    await handle.close();
-    await fs.unlink(lockPath).catch((error) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
-  }
-}
-
 export async function initializeWorkspace(filePath) {
-  return withWorkspaceLock(filePath, async () => {
+  return withFileLock(`${filePath}.lock`, 'Workspace is busy with another mutation. Retry the command.', async () => {
     if (await pathExists(filePath)) throw new Error(`Workspace already exists at ${filePath}`);
     const workspace = { schemaVersion: 1, projects: [] };
     await fs.writeFile(filePath, `${JSON.stringify(workspace, null, 2)}\n`);
@@ -47,7 +25,7 @@ export async function openWorkspace(filePath) {
 export async function addBoardToWorkspace(filePath, boardPath) {
   const absoluteBoardPath = path.resolve(boardPath);
   const board = await BoardStore.open(absoluteBoardPath);
-  return withWorkspaceLock(filePath, async () => {
+  return withFileLock(`${filePath}.lock`, 'Workspace is busy with another mutation. Retry the command.', async () => {
     const { workspace } = await openWorkspace(filePath);
     const existing = workspace.projects.find((project) => project.path === absoluteBoardPath);
     if (existing) return { filePath, workspace, project: existing, unchanged: true };

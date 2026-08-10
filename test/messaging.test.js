@@ -26,3 +26,15 @@ test('mentions and assignments provide a cursor-based agent inbox', async () => 
   assert.equal(builderInbox.messages[0].data.message.replyTo, first.message.id);
   assert.equal(builderInbox.cursor, second.event.cursor);
 });
+
+test('messages reject reply targets that are not on the ticket', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const { ticket } = await board.createTicket({ title: 'Preserve message threads' });
+
+  await assert.rejects(
+    () => board.addComment(ticket.id, { author: 'builder', body: 'Acknowledged.', replyTo: 'm-missing' }),
+    /Reply target not found: m-missing/,
+  );
+  assert.equal((await board.getTicket(ticket.id)).messages.length, 0);
+});
