@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { atomicWriteFile } from './atomic.js';
 import { withFileLock } from './lock.js';
 import { BoardStore } from './store.js';
 import { pathExists } from './utils.js';
@@ -8,7 +9,7 @@ export async function initializeWorkspace(filePath) {
   return withFileLock(`${filePath}.lock`, 'Workspace is busy with another mutation. Retry the command.', async () => {
     if (await pathExists(filePath)) throw new Error(`Workspace already exists at ${filePath}`);
     const workspace = { schemaVersion: 1, projects: [] };
-    await fs.writeFile(filePath, `${JSON.stringify(workspace, null, 2)}\n`);
+    await atomicWriteFile(filePath, `${JSON.stringify(workspace, null, 2)}\n`);
     return { filePath, workspace };
   });
 }
@@ -31,7 +32,7 @@ export async function addBoardToWorkspace(filePath, boardPath) {
     if (existing) return { filePath, workspace, project: existing, unchanged: true };
     const project = { name: board.config.name, path: absoluteBoardPath };
     workspace.projects.push(project);
-    await fs.writeFile(filePath, `${JSON.stringify(workspace, null, 2)}\n`);
+    await atomicWriteFile(filePath, `${JSON.stringify(workspace, null, 2)}\n`);
     return { filePath, workspace, project, unchanged: false };
   });
 }

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { atomicWriteFile } from './atomic.js';
 import { withFileLock } from './lock.js';
 import { DEFAULT_COLUMNS, cleanList, eventCursor, mentionsIn, now, pathExists } from './utils.js';
 
@@ -64,7 +65,7 @@ export class BoardStore {
       lastEventCursor: 0,
     };
     await fs.mkdir(path.join(boardPath, 'tickets'), { recursive: true });
-    await fs.writeFile(path.join(boardPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
+    await atomicWriteFile(path.join(boardPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
     await fs.writeFile(path.join(boardPath, 'events.jsonl'), '');
     return new BoardStore(root, config);
   }
@@ -98,7 +99,7 @@ export class BoardStore {
 
   async saveConfig() {
     this.config.updatedAt = now();
-    await fs.writeFile(path.join(this.path, 'board.json'), `${JSON.stringify(this.config, null, 2)}\n`);
+    await atomicWriteFile(path.join(this.path, 'board.json'), `${JSON.stringify(this.config, null, 2)}\n`);
   }
 
   async refreshConfig() {
@@ -112,7 +113,7 @@ export class BoardStore {
   }
 
   async writeTicket(ticket) {
-    await fs.writeFile(path.join(this.ticketsPath, ticketFileName(ticket.id)), serializeTicket(ticket));
+    await atomicWriteFile(path.join(this.ticketsPath, ticketFileName(ticket.id)), serializeTicket(ticket));
   }
 
   async getTicket(id) {
@@ -157,7 +158,9 @@ export class BoardStore {
 
   async readEvents() {
     const contents = await fs.readFile(path.join(this.path, 'events.jsonl'), 'utf8');
-    return contents.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const lines = contents.split('\n');
+    if (!contents.endsWith('\n')) lines.pop();
+    return lines.filter(Boolean).map((line) => JSON.parse(line));
   }
 
   async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, actor = null }) {
