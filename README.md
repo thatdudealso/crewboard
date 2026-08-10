@@ -137,12 +137,15 @@ crewboard workspace list --file fleet-workspace.json --json
 Each discovered project records an origin badge: `local`, `claude`, or `chatgpt`. Local discovery scans Git repositories below the configured root. Claude discovery checks accessible Claude Code project directories. ChatGPT discovery reads an explicit local export or known local export paths; when none exists, it returns a real `no source found` result and creates no fake candidates.
 
 ```sh
-# Read pending IDs from workspace list, then approve with the local board path.
+# Read pending IDs from workspace list. A discovered local path can be approved directly.
+crewboard workspace approve project-123 --file fleet-workspace.json
+
+# Supply a path when the candidate does not include a usable local board path.
 crewboard workspace approve project-123 --path ../api --file fleet-workspace.json
 crewboard workspace organize project-123 platform --file fleet-workspace.json
 ```
 
-Approval initializes a board only at the captain-supplied local path, then activates the project. The workspace stores paths and provenance but adds no service or central database, so a fleet can choose whether to commit its workspace file or keep it local.
+Approval uses the candidate's discovered local path when available, or a captain-supplied local path when needed, then initializes or opens that board and activates the project. The workspace stores paths and provenance but adds no service or central database, so a fleet can choose whether to commit its workspace file or keep it local.
 
 ## Always-on fleet contract
 
