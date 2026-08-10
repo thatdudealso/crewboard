@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -179,28 +180,33 @@ test('a complete final event without a newline remains durable', async () => {
 
 test('merged branch activity and ticket files preserve every creation', async () => {
   const root = await temporaryDirectory();
-  const basePath = path.join(root, 'base');
-  const firstBranchPath = path.join(root, 'first');
-  const secondBranchPath = path.join(root, 'second');
-  const mergedPath = path.join(root, 'merged');
-  const base = await BoardStore.initialize(basePath);
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  git('init');
+  git('config', 'user.email', 'crewboard@example.test');
+  git('config', 'user.name', 'Crewboard test');
+  const base = await BoardStore.initialize(root);
   await base.createTicket({ title: 'Base ticket' });
-  await Promise.all([firstBranchPath, secondBranchPath, mergedPath].map((branchPath) => fs.cp(basePath, branchPath, { recursive: true })));
+  git('add', '.');
+  git('commit', '-m', 'base board');
+  const baseBranch = git('branch', '--show-current').trim();
 
-  const first = await BoardStore.open(firstBranchPath);
-  const second = await BoardStore.open(secondBranchPath);
+  git('switch', '-c', 'first');
+  const first = await BoardStore.open(root);
   const firstTicket = await first.createTicket({ title: 'First branch ticket' });
   const firstCheckpoint = (await first.activity(0)).cursor;
-  const secondTicket = await second.createTicket({ title: 'Second branch ticket' });
-  await Promise.all([firstTicket, secondTicket].map(({ ticket }, index) => fs.copyFile(
-    path.join(index === 0 ? firstBranchPath : secondBranchPath, '.crewboard', 'tickets', `${ticket.id}.md`),
-    path.join(mergedPath, '.crewboard', 'tickets', `${ticket.id}.md`),
-  )));
-  const firstEvents = (await fs.readFile(path.join(firstBranchPath, '.crewboard', 'events.jsonl'), 'utf8')).trim().split('\n');
-  const secondEvents = (await fs.readFile(path.join(secondBranchPath, '.crewboard', 'events.jsonl'), 'utf8')).trim().split('\n');
-  await fs.writeFile(path.join(mergedPath, '.crewboard', 'events.jsonl'), `${[firstEvents[0], firstEvents[1], secondEvents[1]].join('\n')}\n`);
+  git('add', '.');
+  git('commit', '-m', 'first board change');
 
-  const merged = await BoardStore.open(mergedPath);
+  git('switch', '-c', 'second', baseBranch);
+  const second = await BoardStore.open(root);
+  const secondTicket = await second.createTicket({ title: 'Second branch ticket' });
+  git('add', '.');
+  git('commit', '-m', 'second board change');
+
+  git('switch', 'first');
+  git('merge', '--no-edit', 'second');
+
+  const merged = await BoardStore.open(root);
   assert.deepEqual((await merged.activity(1)).events.map((event) => event.action), ['ticket-created', 'ticket-created']);
   assert.deepEqual((await merged.activity(firstCheckpoint)).events.map((event) => event.ticketId), [secondTicket.ticket.id]);
   assert.deepEqual((await merged.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);

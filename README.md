@@ -84,14 +84,15 @@ Crewboard intentionally stores its state in ordinary project files:
 ```text
 .crewboard/
   board.json                 board name and lifecycle columns
-  events.jsonl               append-only activity stream
+  events/                    mergeable append-only activity records
+  events.jsonl               legacy activity stream, read for compatibility
   tickets/
     CB-12345678901234567890.md  YAML-compatible frontmatter, body, and message log
 ```
 
 Ticket metadata includes its ID, title, body, status, assignee, labels, priority, links, status history, and created and updated timestamps. The Markdown ticket also contains its ordered message objects, including author, mentions, reply link, and timestamp. This keeps a ticket self-contained for code review and portable between clones.
 
-Commit `.crewboard/` with the work it represents. Git resolves independent ticket edits well, and an event log lets an agent cheaply understand changes without reading every ticket.
+Commit `.crewboard/` with the work it represents. Git resolves independent ticket edits and activity records well, and the activity stream lets an agent cheaply understand changes without reading every ticket.
 
 ## Agent messaging
 

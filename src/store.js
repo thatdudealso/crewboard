@@ -78,6 +78,7 @@ export class BoardStore {
       };
       const stagingPath = path.join(absoluteRoot, `.crewboard.initializing-${crypto.randomUUID()}`);
       await fs.mkdir(path.join(stagingPath, 'tickets'), { recursive: true });
+      await fs.mkdir(path.join(stagingPath, 'events'), { recursive: true });
       try {
         await atomicWriteFile(path.join(stagingPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
         await fs.writeFile(path.join(stagingPath, 'events.jsonl'), '');
@@ -110,6 +111,10 @@ export class BoardStore {
 
   get ticketsPath() {
     return path.join(this.path, 'tickets');
+  }
+
+  get eventsPath() {
+    return path.join(this.path, 'events');
   }
 
   async withMutationLock(operation) {
@@ -165,8 +170,9 @@ export class BoardStore {
     await this.repairEventLog();
     const events = await this.readEvents();
     const lastEventCursor = events.at(-1)?.cursor ?? 0;
+    const parentIds = new Set(events.flatMap((event) => event.parents || []));
     const parents = events
-      .filter((event) => !events.some((candidate) => candidate.parents?.includes(event.id)))
+      .filter((event) => !parentIds.has(event.id))
       .map((event) => event.id);
     const event = {
       id: `e-${crypto.randomUUID()}`,
@@ -178,7 +184,8 @@ export class BoardStore {
       actor,
       data,
     };
-    await fs.appendFile(path.join(this.path, 'events.jsonl'), `${JSON.stringify(event)}\n`);
+    await fs.mkdir(this.eventsPath, { recursive: true });
+    await atomicWriteFile(path.join(this.eventsPath, `${event.id}.json`), `${JSON.stringify(event)}\n`);
     this.config.lastEventCursor = event.cursor;
     return event;
   }
@@ -194,11 +201,24 @@ export class BoardStore {
         lines.pop();
       }
     }
-    return lines.filter(Boolean)
-      .map((line, index) => {
-        const event = JSON.parse(line);
-        return { event: { ...event, id: event.id || `e-legacy-${crypto.createHash('sha256').update(line).digest('hex')}` }, index };
-      })
+    const legacyEvents = lines.filter(Boolean).map((line) => ({ event: JSON.parse(line), serialized: line }));
+    let eventFiles = [];
+    try {
+      eventFiles = (await fs.readdir(this.eventsPath)).filter((file) => file.endsWith('.json')).sort();
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const storedEvents = await Promise.all(eventFiles.map(async (file) => {
+      const serialized = await fs.readFile(path.join(this.eventsPath, file), 'utf8');
+      return { event: JSON.parse(serialized), serialized };
+    }));
+    const uniqueEvents = new Map();
+    for (const { event, serialized } of [...legacyEvents, ...storedEvents]) {
+      const id = event.id || `e-legacy-${crypto.createHash('sha256').update(serialized).digest('hex')}`;
+      if (!uniqueEvents.has(id)) uniqueEvents.set(id, { ...event, id });
+    }
+    return [...uniqueEvents.values()]
+      .map((event, index) => ({ event, index }))
       .sort((left, right) => left.event.cursor - right.event.cursor || String(left.event.id || '').localeCompare(String(right.event.id || '')) || left.index - right.index)
       .map(({ event }, index) => ({ ...event, cursor: index + 1 }));
   }
