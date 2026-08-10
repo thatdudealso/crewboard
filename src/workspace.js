@@ -99,11 +99,12 @@ function candidateFromPath(candidatePath, origin, sourceLocation) {
 
 async function scanGitRepositories(root) {
   const candidates = [];
-  async function visit(directory) {
+  async function visit(directory, required = false) {
     let entries;
     try {
       entries = await fs.readdir(directory, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      if (required) throw error;
       return;
     }
     if (entries.some((entry) => entry.name === '.git')) {
@@ -114,14 +115,19 @@ async function scanGitRepositories(root) {
       .filter((entry) => entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name))
       .map((entry) => visit(path.join(directory, entry.name))));
   }
-  if (await pathExists(root)) await visit(root);
+  if (await pathExists(root)) await visit(root, true);
   return candidates.sort((left, right) => left.localeCompare(right));
 }
 
 async function discoverLocalProjects(root) {
   const scanRoot = absolutePath(root || path.join(os.homedir(), 'src'));
   if (!(await pathExists(scanRoot))) return { sourceFound: false, sourceLocation: scanRoot, candidates: [] };
-  const repositories = await scanGitRepositories(scanRoot);
+  let repositories;
+  try {
+    repositories = await scanGitRepositories(scanRoot);
+  } catch {
+    return { sourceFound: false, sourceLocation: scanRoot, candidates: [] };
+  }
   return {
     sourceFound: true,
     sourceLocation: scanRoot,
@@ -139,8 +145,15 @@ async function discoverClaudeProjects(root) {
   for (const candidateRoot of configuredRoot) if (await pathExists(candidateRoot)) roots.push(candidateRoot);
   if (!roots.length) return { sourceFound: false, sourceLocation: configuredRoot[0], candidates: [] };
   const projects = [];
+  const availableRoots = [];
   for (const claudeRoot of roots) {
-    const repositories = await scanGitRepositories(claudeRoot);
+    let repositories;
+    try {
+      repositories = await scanGitRepositories(claudeRoot);
+    } catch {
+      continue;
+    }
+    availableRoots.push(claudeRoot);
     if (repositories.length) projects.push(...repositories.map((repository) => candidateFromPath(repository, 'claude', claudeRoot)));
     else {
       const entries = await fs.readdir(claudeRoot, { withFileTypes: true }).catch(() => []);
@@ -153,10 +166,11 @@ async function discoverClaudeProjects(root) {
       })));
     }
   }
+  if (!availableRoots.length) return { sourceFound: false, sourceLocation: roots.join(', '), candidates: [] };
   const seen = new Set();
   return {
     sourceFound: true,
-    sourceLocation: roots.join(', '),
+    sourceLocation: availableRoots.join(', '),
     candidates: projects.filter((project) => {
       const key = `${project.sourceLocation}:${project.path}`;
       if (seen.has(key)) return false;

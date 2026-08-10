@@ -106,6 +106,21 @@ test('an unavailable ChatGPT export reports a real no-source state', async () =>
   assert.equal((await listWorkspace(workspace)).pendingProjects.length, 0);
 });
 
+test('an inaccessible discovery root reports an unavailable source', async () => {
+  const root = await temporaryDirectory();
+  const workspace = path.join(root, 'fleet-workspace.json');
+  const sourceFile = path.join(root, 'not-a-directory');
+  await fs.writeFile(sourceFile, 'not a project root');
+  await initializeWorkspace(workspace);
+
+  const local = await discoverProjects(workspace, { source: 'local', root: sourceFile });
+  const claude = await discoverProjects(workspace, { source: 'claude', root: sourceFile });
+  assert.equal(local.sourceFound, false);
+  assert.equal(claude.sourceFound, false);
+  assert.deepEqual(local.discovered, []);
+  assert.deepEqual(claude.discovered, []);
+});
+
 test('a local ChatGPT export preserves every pending project candidate', async () => {
   const root = await temporaryDirectory();
   const workspace = path.join(root, 'fleet-workspace.json');
