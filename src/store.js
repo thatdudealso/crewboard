@@ -53,7 +53,7 @@ function parseTicket(contents, filePath) {
 }
 
 function ticketFileName(ticketId) {
-  if (!/^CB-\d{4,}$/.test(ticketId)) throw new Error(`Invalid ticket id: ${ticketId}`);
+  if (!/^CB-\d{4,}(?:-[a-f0-9]{8})?$/.test(ticketId)) throw new Error(`Invalid ticket id: ${ticketId}`);
   return `${ticketId}.md`;
 }
 
@@ -166,6 +166,7 @@ export class BoardStore {
     const events = await this.readEvents();
     const lastEventCursor = events.at(-1)?.cursor ?? 0;
     const event = {
+      id: `e-${crypto.randomUUID()}`,
       cursor: lastEventCursor + 1,
       at: now(),
       action,
@@ -175,7 +176,6 @@ export class BoardStore {
     };
     await fs.appendFile(path.join(this.path, 'events.jsonl'), `${JSON.stringify(event)}\n`);
     this.config.lastEventCursor = event.cursor;
-    await this.saveConfig();
     return event;
   }
 
@@ -190,7 +190,10 @@ export class BoardStore {
         lines.pop();
       }
     }
-    return lines.filter(Boolean).map((line) => JSON.parse(line));
+    return lines.filter(Boolean)
+      .map((line, index) => ({ event: JSON.parse(line), index }))
+      .sort((left, right) => left.event.cursor - right.event.cursor || String(left.event.id || '').localeCompare(String(right.event.id || '')) || left.index - right.index)
+      .map(({ event }, index) => ({ ...event, cursor: index + 1 }));
   }
 
   async repairEventLog() {
@@ -215,8 +218,10 @@ export class BoardStore {
     await this.refreshConfig();
     if (!title?.trim()) throw new Error('A ticket title is required.');
     this.assertStatus(status);
+    const existingTickets = await this.listTickets({ includeArchived: true });
+    const nextTicketNumber = Math.max(this.config.nextTicketNumber - 1, ...existingTickets.map((existing) => Number(existing.id.match(/^CB-(\d+)/)?.[1]) || 0)) + 1;
     const ticket = {
-      id: `CB-${String(this.config.nextTicketNumber).padStart(4, '0')}`,
+      id: `CB-${String(nextTicketNumber).padStart(4, '0')}-${crypto.randomUUID().slice(0, 8)}`,
       title: title.trim(),
       body,
       status,
@@ -225,7 +230,7 @@ export class BoardStore {
       priority,
       links: cleanList(links),
       source,
-      position: position ?? this.config.nextTicketNumber,
+      position: position ?? nextTicketNumber,
       archivedAt,
       transferredTo: null,
       statusHistory: [{ status, at: now(), by: actor, note: 'Created' }],
@@ -233,8 +238,6 @@ export class BoardStore {
       updatedAt: now(),
       messages,
     };
-    this.config.nextTicketNumber += 1;
-    await this.saveConfig();
     await this.writeTicket(ticket);
     const event = await this.appendEvent('ticket-created', {
       ticketId: ticket.id,

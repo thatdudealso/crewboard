@@ -189,7 +189,7 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
   if (command === 'list') {
     const board = await BoardStore.open(root);
     const tickets = await board.listTickets({ status: options.status, assignee: options.assignee });
-    return render({ board: { name: board.config.name, columns: board.config.columns }, tickets, cursor: board.config.lastEventCursor }, { json, human: (value) => value.tickets.length ? value.tickets.map(humanTicket).join('\n') : 'No tickets.' });
+    return render({ board: { name: board.config.name, columns: board.config.columns }, tickets, cursor: (await board.activity()).cursor }, { json, human: (value) => value.tickets.length ? value.tickets.map(humanTicket).join('\n') : 'No tickets.' });
   }
   if (command === 'show') {
     const [id] = arguments_;

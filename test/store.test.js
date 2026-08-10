@@ -18,15 +18,15 @@ test('a board persists git-friendly markdown tickets and append-only events', as
     actor: 'captain',
   });
 
-  assert.equal(ticket.id, 'CB-0001');
+  assert.match(ticket.id, /^CB-0001-[a-f0-9]{8}$/);
   assert.deepEqual(ticket.labels, ['release', 'agent']);
   assert.equal(event.cursor, 1);
-  const persisted = await fs.readFile(path.join(root, '.crewboard', 'tickets', 'CB-0001.md'), 'utf8');
-  assert.match(persisted, /^---\nschemaVersion: 1\nid: "CB-0001"/);
+  const persisted = await fs.readFile(path.join(root, '.crewboard', 'tickets', `${ticket.id}.md`), 'utf8');
+  assert.match(persisted, new RegExp(`^---\\nschemaVersion: 1\\nid: "${ticket.id}"`));
   assert.match(persisted, /<!-- crewboard-messages/);
 
   const reopened = await BoardStore.open(root);
-  const found = await reopened.getTicket('CB-0001');
+  const found = await reopened.getTicket(ticket.id);
   assert.equal(found.title, 'Launch crewboard');
   assert.equal(found.assignee, 'builder');
   assert.deepEqual((await reopened.activity(0)).events.map((item) => item.action), ['ticket-created']);
@@ -70,7 +70,7 @@ test('open board handles refresh their cursors before recording later mutations'
   await secondHandle.addComment(first.ticket.id, { author: 'worker', body: 'A durable update.' });
   const second = await firstHandle.createTicket({ title: 'Second task' });
 
-  assert.equal(second.ticket.id, 'CB-0002');
+  assert.match(second.ticket.id, /^CB-0002-[a-f0-9]{8}$/);
   assert.deepEqual((await firstHandle.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);
 });
 
@@ -80,7 +80,8 @@ test('simultaneous agents receive unique ticket IDs and activity cursors', async
   const handles = await Promise.all(Array.from({ length: 5 }, () => BoardStore.open(root)));
   const created = await Promise.all(handles.map((board, index) => board.createTicket({ title: `Concurrent task ${index + 1}` })));
 
-  assert.deepEqual(created.map((result) => result.ticket.id).sort(), ['CB-0001', 'CB-0002', 'CB-0003', 'CB-0004', 'CB-0005']);
+  assert.equal(new Set(created.map((result) => result.ticket.id)).size, 5);
+  assert.deepEqual(created.map((result) => Number(result.ticket.id.match(/^CB-(\d+)/)[1])).sort((left, right) => left - right), [1, 2, 3, 4, 5]);
   const board = await BoardStore.open(root);
   assert.deepEqual((await board.activity()).events.map((event) => event.cursor), [1, 2, 3, 4, 5]);
 });
@@ -120,7 +121,7 @@ test('a board recovers a mutation lock left by a stopped process', async () => {
 
   const { ticket } = await board.createTicket({ title: 'Recover mutations' });
 
-  assert.equal(ticket.id, 'CB-0001');
+  assert.match(ticket.id, /^CB-0001-[a-f0-9]{8}$/);
 });
 
 test('a board recovers an orphaned stale-lock recovery sentinel', async () => {
@@ -132,7 +133,7 @@ test('a board recovers an orphaned stale-lock recovery sentinel', async () => {
 
   const { ticket } = await board.createTicket({ title: 'Recover handoff' });
 
-  assert.equal(ticket.id, 'CB-0001');
+  assert.match(ticket.id, /^CB-0001-[a-f0-9]{8}$/);
 });
 
 test('activity ignores an unfinished trailing event record', async () => {
@@ -174,6 +175,36 @@ test('a complete final event without a newline remains durable', async () => {
   assert.deepEqual((await board.activity(0)).events.map((event) => event.action), ['ticket-created', 'merged-event']);
   await board.createTicket({ title: 'Later event' });
   assert.deepEqual((await board.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);
+});
+
+test('merged branch activity and ticket files preserve every creation', async () => {
+  const root = await temporaryDirectory();
+  const basePath = path.join(root, 'base');
+  const firstBranchPath = path.join(root, 'first');
+  const secondBranchPath = path.join(root, 'second');
+  const mergedPath = path.join(root, 'merged');
+  const base = await BoardStore.initialize(basePath);
+  await base.createTicket({ title: 'Base ticket' });
+  await Promise.all([firstBranchPath, secondBranchPath, mergedPath].map((branchPath) => fs.cp(basePath, branchPath, { recursive: true })));
+
+  const first = await BoardStore.open(firstBranchPath);
+  const second = await BoardStore.open(secondBranchPath);
+  const firstTicket = await first.createTicket({ title: 'First branch ticket' });
+  const secondTicket = await second.createTicket({ title: 'Second branch ticket' });
+  await Promise.all([firstTicket, secondTicket].map(({ ticket }, index) => fs.copyFile(
+    path.join(index === 0 ? firstBranchPath : secondBranchPath, '.crewboard', 'tickets', `${ticket.id}.md`),
+    path.join(mergedPath, '.crewboard', 'tickets', `${ticket.id}.md`),
+  )));
+  const firstEvents = (await fs.readFile(path.join(firstBranchPath, '.crewboard', 'events.jsonl'), 'utf8')).trim().split('\n');
+  const secondEvents = (await fs.readFile(path.join(secondBranchPath, '.crewboard', 'events.jsonl'), 'utf8')).trim().split('\n');
+  await fs.writeFile(path.join(mergedPath, '.crewboard', 'events.jsonl'), `${[firstEvents[0], firstEvents[1], secondEvents[1]].join('\n')}\n`);
+
+  const merged = await BoardStore.open(mergedPath);
+  assert.deepEqual((await merged.activity(1)).events.map((event) => event.action), ['ticket-created', 'ticket-created']);
+  assert.deepEqual((await merged.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);
+  await merged.createTicket({ title: 'Merged ticket' });
+  assert.equal((await merged.listTickets()).length, 4);
+  assert.deepEqual((await merged.activity(0)).events.map((event) => event.cursor), [1, 2, 3, 4]);
 });
 
 test('a ticket can move across projects while preserving its conversation', async () => {

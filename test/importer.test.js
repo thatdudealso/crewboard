@@ -22,8 +22,8 @@ test('tasks-axi markdown is imported and syncs idempotently', async () => {
   const board = await BoardStore.initialize(root);
   const first = await importTasksAxi(board, source);
   assert.equal(first.imported.length, 2);
-  assert.equal((await board.getTicket('CB-0001')).status, 'active');
-  assert.equal((await board.getTicket('CB-0002')).status, 'done');
+  assert.equal((await board.getTicket(first.imported[0].id)).status, 'active');
+  assert.equal((await board.getTicket(first.imported[1].id)).status, 'done');
 
   const second = await importTasksAxi(board, source);
   assert.equal(second.imported.length, 0);
@@ -32,7 +32,7 @@ test('tasks-axi markdown is imported and syncs idempotently', async () => {
   await fs.writeFile(source, '- [x] crewboard-build - Build the board (kind: ship)\n');
   const third = await importTasksAxi(board, source);
   assert.equal(third.updated.length, 1);
-  assert.equal((await board.getTicket('CB-0001')).status, 'done');
+  assert.equal((await board.getTicket(first.imported[0].id)).status, 'done');
 });
 
 test('simultaneous imports create each source task once', async () => {
