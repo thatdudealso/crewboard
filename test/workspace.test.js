@@ -119,5 +119,8 @@ test('a local ChatGPT export preserves every pending project candidate', async (
   assert.deepEqual(discovery.discovered.map((project) => project.name), ['Research notes', 'Release plan']);
   assert.deepEqual(discovery.discovered.map((project) => project.origin), ['chatgpt', 'chatgpt']);
   assert.equal((await discoverProjects(workspace, { source: 'chatgpt', root: exportPath })).discovered.length, 0);
-  assert.equal((await listWorkspace(workspace)).pendingProjects.length, 2);
+  await fs.writeFile(exportPath, JSON.stringify({ projects: [{ name: 'New project' }, { name: 'Research notes' }, { name: 'Release plan' }] }));
+  const updatedDiscovery = await discoverProjects(workspace, { source: 'chatgpt', root: exportPath });
+  assert.deepEqual(updatedDiscovery.discovered.map((project) => project.name), ['New project']);
+  assert.equal((await listWorkspace(workspace)).pendingProjects.length, 3);
 });

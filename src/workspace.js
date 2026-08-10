@@ -167,7 +167,7 @@ function extractChatGptProjects(exported) {
     boardPath: candidate.path || candidate.localPath || candidate.directory || null,
     origin: 'chatgpt',
     sourceLocation: null,
-    sourceId: String(candidate.id ?? candidate.uuid ?? candidate.project_id ?? index + 1),
+    sourceId: String(candidate.id ?? candidate.uuid ?? candidate.project_id ?? crypto.createHash('sha256').update(JSON.stringify(candidate, Object.keys(candidate).sort())).digest('hex').slice(0, 24)),
   }));
 }
 
