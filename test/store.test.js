@@ -89,6 +89,18 @@ test('a board recovers a mutation lock left by a stopped process', async () => {
   assert.equal(ticket.id, 'CB-0001');
 });
 
+test('a board recovers an orphaned stale-lock recovery sentinel', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const lockPath = path.join(root, '.crewboard', '.mutation.lock');
+  await fs.writeFile(lockPath, JSON.stringify({ pid: 2147483647, createdAt: '2000-01-01T00:00:00.000Z' }));
+  await fs.writeFile(`${lockPath}.recovery`, JSON.stringify({ pid: 2147483647, createdAt: '2000-01-01T00:00:00.000Z' }));
+
+  const { ticket } = await board.createTicket({ title: 'Recover handoff' });
+
+  assert.equal(ticket.id, 'CB-0001');
+});
+
 test('activity ignores an unfinished trailing event record', async () => {
   const root = await temporaryDirectory();
   const board = await BoardStore.initialize(root);

@@ -42,16 +42,55 @@ async function recoveryLockExists(lockPath) {
   }
 }
 
-async function handoffStaleLock(lockPath) {
-  const recoveryPath = `${lockPath}.recovery`;
-  let handle;
+async function acquireLock(lockPath) {
+  const token = crypto.randomUUID();
+  const temporaryPath = `${lockPath}.${process.pid}.${token}.tmp`;
+  await fs.writeFile(temporaryPath, JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() }));
   try {
-    handle = await fs.open(recoveryPath, 'wx');
-    await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
+    await fs.link(temporaryPath, lockPath);
+    return token;
   } catch (error) {
-    if (error.code === 'EEXIST') return false;
+    if (error.code === 'EEXIST') return null;
+    throw error;
+  } finally {
+    await fs.unlink(temporaryPath).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
+}
+
+async function releaseLock(lockPath, token) {
+  let owner;
+  try {
+    owner = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
     throw error;
   }
+  if (owner.token !== token) return;
+  await fs.unlink(lockPath).catch((error) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+}
+
+async function recoverStaleRecoveryLock(lockPath) {
+  const recoveryPath = `${lockPath}.recovery`;
+  if (!(await staleLock(recoveryPath))) return false;
+  const stalePath = `${recoveryPath}.${crypto.randomUUID()}.stale`;
+  try {
+    await fs.rename(recoveryPath, stalePath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+  await fs.unlink(stalePath);
+  return true;
+}
+
+async function handoffStaleLock(lockPath) {
+  const recoveryPath = `${lockPath}.recovery`;
+  const recoveryToken = await acquireLock(recoveryPath);
+  if (!recoveryToken) return false;
   try {
     if (!(await staleLock(lockPath))) return false;
     const stalePath = `${lockPath}.${crypto.randomUUID()}.stale`;
@@ -64,40 +103,31 @@ async function handoffStaleLock(lockPath) {
     await fs.unlink(stalePath);
     return true;
   } finally {
-    await handle.close();
-    await fs.unlink(recoveryPath).catch((error) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+    await releaseLock(recoveryPath, recoveryToken);
   }
 }
 
 export async function withFileLock(lockPath, busyMessage, operation) {
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  let handle;
-  while (!handle) {
+  let token;
+  while (!token) {
     if (await recoveryLockExists(lockPath)) {
+      if (await recoverStaleRecoveryLock(lockPath)) continue;
       if (Date.now() >= deadline) throw new Error(busyMessage);
       await new Promise((resolve) => setTimeout(resolve, 20));
       continue;
     }
-    try {
-      handle = await fs.open(lockPath, 'wx');
-      await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      if (await staleLock(lockPath) && await handoffStaleLock(lockPath)) {
-        continue;
-      }
-      if (Date.now() >= deadline) throw new Error(busyMessage);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    token = await acquireLock(lockPath);
+    if (token) continue;
+    if (await staleLock(lockPath) && await handoffStaleLock(lockPath)) {
+      continue;
     }
+    if (Date.now() >= deadline) throw new Error(busyMessage);
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
   try {
     return await operation();
   } finally {
-    await handle.close();
-    await fs.unlink(lockPath).catch((error) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+    await releaseLock(lockPath, token);
   }
 }

@@ -34,3 +34,15 @@ test('tasks-axi markdown is imported and syncs idempotently', async () => {
   assert.equal(third.updated.length, 1);
   assert.equal((await board.getTicket('CB-0001')).status, 'done');
 });
+
+test('simultaneous imports create each source task once', async () => {
+  const root = await temporaryDirectory();
+  const source = path.join(root, 'backlog.md');
+  await fs.writeFile(source, '- [ ] crewboard-build - Build the board\n');
+  const first = await BoardStore.initialize(root);
+  const second = await BoardStore.open(root);
+
+  await Promise.all([importTasksAxi(first, source), importTasksAxi(second, source)]);
+
+  assert.equal((await first.listTickets()).filter((ticket) => ticket.source?.key === 'id:crewboard-build').length, 1);
+});

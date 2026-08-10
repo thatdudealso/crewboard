@@ -49,41 +49,46 @@ function mappedStatus(board, task) {
 
 export async function importTasksAxi(board, sourcePath, { actor = 'tasks-axi' } = {}) {
   const tasks = parseTasksAxi(await fs.readFile(sourcePath, 'utf8'));
-  const tickets = await board.listTickets();
-  const bySourceKey = new Map(tickets.filter((ticket) => ticket.source?.type === 'tasks-axi').map((ticket) => [ticket.source.key, ticket]));
-  const result = { sourcePath, imported: [], updated: [], unchanged: [], skipped: [] };
+  return board.withMutationLock(async () => {
+    await board.refreshConfig();
+    const tickets = await board.listTickets();
+    const bySourceKey = new Map(tickets.filter((ticket) => ticket.source?.type === 'tasks-axi').map((ticket) => [ticket.source.key, ticket]));
+    const result = { sourcePath, imported: [], updated: [], unchanged: [], skipped: [] };
 
-  for (const task of tasks) {
-    const status = mappedStatus(board, task);
-    const source = { type: 'tasks-axi', key: task.key };
-    const existing = bySourceKey.get(task.key);
-    if (!existing) {
-      const created = await board.createTicket({
-        title: task.title,
-        body: 'Imported from tasks-axi.',
-        status,
-        assignee: task.assignee,
-        labels: task.labels,
-        priority: task.priority,
-        links: task.links,
-        source,
+    for (const task of tasks) {
+      const status = mappedStatus(board, task);
+      const source = { type: 'tasks-axi', key: task.key };
+      const existing = bySourceKey.get(task.key);
+      if (!existing) {
+        const created = await board.createTicketUnlocked({
+          title: task.title,
+          body: 'Imported from tasks-axi.',
+          status,
+          assignee: task.assignee,
+          labels: task.labels,
+          priority: task.priority,
+          links: task.links,
+          source,
+          actor,
+        });
+        bySourceKey.set(task.key, created.ticket);
+        result.imported.push(created.ticket);
+        continue;
+      }
+      const changes = { title: task.title, status, assignee: task.assignee, labels: task.labels, priority: task.priority, links: task.links };
+      const changed = Object.entries(changes).some(([key, value]) => JSON.stringify(existing[key]) !== JSON.stringify(value));
+      if (!changed) {
+        result.unchanged.push(existing);
+        continue;
+      }
+      const updated = await board.updateTicketUnlocked(existing.id, changes, {
+        action: 'tasks-axi-synced',
         actor,
+        eventData: { sourceKey: task.key },
       });
-      result.imported.push(created.ticket);
-      continue;
+      bySourceKey.set(task.key, updated.ticket);
+      result.updated.push(updated.ticket);
     }
-    const changes = { title: task.title, status, assignee: task.assignee, labels: task.labels, priority: task.priority, links: task.links };
-    const changed = Object.entries(changes).some(([key, value]) => JSON.stringify(existing[key]) !== JSON.stringify(value));
-    if (!changed) {
-      result.unchanged.push(existing);
-      continue;
-    }
-    const updated = await board.updateTicket(existing.id, changes, {
-      action: 'tasks-axi-synced',
-      actor,
-      eventData: { sourceKey: task.key },
-    });
-    result.updated.push(updated.ticket);
-  }
-  return result;
+    return result;
+  });
 }
