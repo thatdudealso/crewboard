@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { BoardStore } from '../src/store.js';
+import { postMessage } from '../src/lifecycle.js';
+import { temporaryDirectory } from '../test-support/helpers.js';
+
+test('mentions and assignments provide a cursor-based agent inbox', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const { ticket } = await board.createTicket({ title: 'Coordinate deployment' });
+  await board.assignTicket(ticket.id, 'captain', { actor: 'triage' });
+  const first = await postMessage(root, ticket.id, { author: 'builder', body: 'The preview is ready for @captain.' });
+  const second = await postMessage(root, ticket.id, {
+    author: 'captain',
+    body: 'Thanks. @builder please add the release note.',
+    replyTo: first.message.id,
+  });
+
+  const captainInbox = await board.inbox('captain', 0);
+  assert.equal(captainInbox.assignments.length, 1);
+  assert.equal(captainInbox.messages.length, 1);
+  assert.equal(captainInbox.messages[0].data.message.id, first.message.id);
+
+  const builderInbox = await board.inbox('builder', first.event.cursor);
+  assert.equal(builderInbox.messages.length, 1);
+  assert.equal(builderInbox.messages[0].data.message.replyTo, first.message.id);
+  assert.equal(builderInbox.cursor, second.event.cursor);
+});

@@ -1,0 +1,29 @@
+{
+  "name": "crewboard",
+  "version": "1.0.0",
+  "description": "A git-native ticket and message board for AI-agent fleets",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "crewboard": "bin/crewboard.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check bin/crewboard.js && node --check src/*.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "agents",
+    "tickets",
+    "coordination",
+    "git-native"
+  ]
+}
