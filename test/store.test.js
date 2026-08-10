@@ -135,3 +135,14 @@ test('activity ignores an unfinished trailing event record', async () => {
   assert.equal(activity.cursor, 1);
   assert.deepEqual(activity.events.map((event) => event.cursor), [1]);
 });
+
+test('the next mutation repairs an unfinished event record before appending', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  await board.createTicket({ title: 'Published event' });
+  await fs.appendFile(path.join(root, '.crewboard', 'events.jsonl'), '{"cursor":2');
+
+  await board.createTicket({ title: 'Recovered event stream' });
+
+  assert.deepEqual((await board.activity(0)).events.map((event) => event.cursor), [1, 2]);
+});

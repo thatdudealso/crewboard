@@ -156,6 +156,7 @@ export class BoardStore {
 
   async appendEvent(action, { ticketId = null, actor = null, data = {} } = {}) {
     await this.refreshConfig();
+    await this.repairEventLog();
     const events = await this.readEvents();
     const lastEventCursor = events.at(-1)?.cursor ?? 0;
     const event = {
@@ -177,6 +178,14 @@ export class BoardStore {
     const lines = contents.split('\n');
     if (!contents.endsWith('\n')) lines.pop();
     return lines.filter(Boolean).map((line) => JSON.parse(line));
+  }
+
+  async repairEventLog() {
+    const eventPath = path.join(this.path, 'events.jsonl');
+    const contents = await fs.readFile(eventPath, 'utf8');
+    if (contents.endsWith('\n')) return;
+    const lastNewline = contents.lastIndexOf('\n');
+    await atomicWriteFile(eventPath, lastNewline < 0 ? '' : contents.slice(0, lastNewline + 1));
   }
 
   async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, actor = null }) {
