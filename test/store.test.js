@@ -110,7 +110,7 @@ test('activity derives its polling cursor from durable events', async () => {
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
   const activity = await BoardStore.open(root).then((reopened) => reopened.activity(0));
-  assert.equal(activity.cursor, 1);
+  assert.match(activity.cursor, /^v1\./);
   assert.equal(activity.events[0].action, 'ticket-created');
 });
 
@@ -144,7 +144,7 @@ test('activity ignores an unfinished trailing event record', async () => {
 
   const activity = await board.activity(0);
 
-  assert.equal(activity.cursor, 1);
+  assert.match(activity.cursor, /^v1\./);
   assert.deepEqual(activity.events.map((event) => event.cursor), [1]);
 });
 
@@ -190,6 +190,7 @@ test('merged branch activity and ticket files preserve every creation', async ()
   const first = await BoardStore.open(firstBranchPath);
   const second = await BoardStore.open(secondBranchPath);
   const firstTicket = await first.createTicket({ title: 'First branch ticket' });
+  const firstCheckpoint = (await first.activity(0)).cursor;
   const secondTicket = await second.createTicket({ title: 'Second branch ticket' });
   await Promise.all([firstTicket, secondTicket].map(({ ticket }, index) => fs.copyFile(
     path.join(index === 0 ? firstBranchPath : secondBranchPath, '.crewboard', 'tickets', `${ticket.id}.md`),
@@ -201,6 +202,7 @@ test('merged branch activity and ticket files preserve every creation', async ()
 
   const merged = await BoardStore.open(mergedPath);
   assert.deepEqual((await merged.activity(1)).events.map((event) => event.action), ['ticket-created', 'ticket-created']);
+  assert.deepEqual((await merged.activity(firstCheckpoint)).events.map((event) => event.ticketId), [secondTicket.ticket.id]);
   assert.deepEqual((await merged.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);
   await merged.createTicket({ title: 'Merged ticket' });
   assert.equal((await merged.listTickets()).length, 4);

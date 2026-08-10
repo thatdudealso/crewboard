@@ -16,10 +16,19 @@ export function mentionsIn(text) {
 }
 
 export function eventCursor(value) {
-  if (value === undefined || value === null || value === '') return 0;
+  if (value === undefined || value === null || value === '') return { eventIds: new Set(), legacyCursor: 0 };
+  if (typeof value === 'string' && value.startsWith('v1.')) {
+    try {
+      const eventIds = JSON.parse(Buffer.from(value.slice(3), 'base64url').toString('utf8'));
+      if (!Array.isArray(eventIds) || eventIds.some((id) => typeof id !== 'string')) throw new Error('Invalid activity cursor.');
+      return { eventIds: new Set(eventIds), legacyCursor: null };
+    } catch {
+      throw new Error(`Invalid cursor: ${value}`);
+    }
+  }
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`Invalid cursor: ${value}`);
-  return parsed;
+  return { eventIds: new Set(), legacyCursor: parsed };
 }
 
 export function summarize(text, maxLength = 88) {

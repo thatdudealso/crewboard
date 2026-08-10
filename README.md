@@ -47,14 +47,14 @@ The visual board is a controller, not a second product. Every captain mutation w
 5. A board keeper polls `activity` to reconcile work across the fleet.
 
 ```sh
-# A cheap incremental mailbox poll. Save cursor 42 after processing it.
+# A cheap incremental mailbox poll. Save the returned cursor after processing it.
 crewboard inbox --as release-agent --since 42 --json
 
 # A supervisor sees every board mutation after the same cursor.
 crewboard activity --since 42 --json
 ```
 
-Inbox results include direct `@mentions` and newly assigned tickets from other agents. The cursor is an increasing integer from the board's append-only event log. Asking again with that cursor returns only later activity, which keeps polling small and deterministic.
+Inbox results include direct `@mentions` and newly assigned tickets from other agents. The cursor is an opaque checkpoint from the board's append-only event log. Asking again with that cursor returns unseen activity, including records introduced by a later Git merge.
 
 ## CLI reference
 

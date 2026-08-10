@@ -10,6 +10,7 @@ test('mentions and assignments provide a cursor-based agent inbox', async () => 
   const { ticket } = await board.createTicket({ title: 'Coordinate deployment' });
   await board.assignTicket(ticket.id, 'captain', { actor: 'triage' });
   const first = await postMessage(root, ticket.id, { author: 'builder', body: 'The preview is ready for @captain.' });
+  const firstCheckpoint = (await board.activity()).cursor;
   const second = await postMessage(root, ticket.id, {
     author: 'captain',
     body: 'Thanks. @builder please add the release note.',
@@ -21,10 +22,10 @@ test('mentions and assignments provide a cursor-based agent inbox', async () => 
   assert.equal(captainInbox.messages.length, 1);
   assert.equal(captainInbox.messages[0].data.message.id, first.message.id);
 
-  const builderInbox = await board.inbox('builder', first.event.cursor);
+  const builderInbox = await board.inbox('builder', firstCheckpoint);
   assert.equal(builderInbox.messages.length, 1);
   assert.equal(builderInbox.messages[0].data.message.replyTo, first.message.id);
-  assert.equal(builderInbox.cursor, second.event.cursor);
+  assert.match(builderInbox.cursor, /^v1\./);
 });
 
 test('messages reject reply targets that are not on the ticket', async () => {

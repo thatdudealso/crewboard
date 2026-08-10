@@ -191,7 +191,10 @@ export class BoardStore {
       }
     }
     return lines.filter(Boolean)
-      .map((line, index) => ({ event: JSON.parse(line), index }))
+      .map((line, index) => {
+        const event = JSON.parse(line);
+        return { event: { ...event, id: event.id || `e-legacy-${crypto.createHash('sha256').update(line).digest('hex')}` }, index };
+      })
       .sort((left, right) => left.event.cursor - right.event.cursor || String(left.event.id || '').localeCompare(String(right.event.id || '')) || left.index - right.index)
       .map(({ event }, index) => ({ ...event, cursor: index + 1 }));
   }
@@ -396,10 +399,13 @@ export class BoardStore {
   }
 
   async activity(since = 0) {
-    const cursor = eventCursor(since);
+    const checkpoint = eventCursor(since);
     const allEvents = await this.readEvents();
-    const lastEventCursor = allEvents.at(-1)?.cursor ?? 0;
-    return { events: allEvents.filter((event) => event.cursor > cursor), cursor: lastEventCursor };
+    const events = checkpoint.eventIds.size
+      ? allEvents.filter((event) => !checkpoint.eventIds.has(event.id))
+      : allEvents.filter((event) => event.cursor > checkpoint.legacyCursor);
+    const cursor = `v1.${Buffer.from(JSON.stringify(allEvents.map((event) => event.id))).toString('base64url')}`;
+    return { events, cursor };
   }
 
   async inbox(agent, since = 0) {
