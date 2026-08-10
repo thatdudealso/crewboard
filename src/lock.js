@@ -33,13 +33,15 @@ async function staleLock(lockPath) {
 }
 
 async function recoveryLockExists(lockPath) {
-  try {
-    await fs.access(`${lockPath}.recovery`);
-    return true;
-  } catch (error) {
-    if (error.code === 'ENOENT') return false;
-    throw error;
+  for (const suffix of ['.recovery', '.recovery.claim']) {
+    try {
+      await fs.access(`${lockPath}${suffix}`);
+      return true;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
   }
+  return false;
 }
 
 async function acquireLock(lockPath) {
@@ -75,16 +77,33 @@ async function releaseLock(lockPath, token) {
 
 async function recoverStaleRecoveryLock(lockPath) {
   const recoveryPath = `${lockPath}.recovery`;
-  if (!(await staleLock(recoveryPath))) return false;
-  const stalePath = `${recoveryPath}.${crypto.randomUUID()}.stale`;
+  const claimPath = `${recoveryPath}.claim`;
   try {
-    await fs.rename(recoveryPath, stalePath);
+    await fs.link(recoveryPath, claimPath);
   } catch (error) {
-    if (error.code === 'ENOENT') return false;
+    if (error.code === 'ENOENT') {
+      if (await staleLock(claimPath)) {
+        await fs.unlink(claimPath).catch((unlinkError) => {
+          if (unlinkError.code !== 'ENOENT') throw unlinkError;
+        });
+        return true;
+      }
+      return false;
+    }
+    if (error.code === 'EEXIST') return false;
     throw error;
   }
-  await fs.unlink(stalePath);
-  return true;
+  try {
+    if (!(await staleLock(claimPath))) return false;
+    await fs.unlink(recoveryPath).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    return true;
+  } finally {
+    await fs.unlink(claimPath).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
 }
 
 async function handoffStaleLock(lockPath) {

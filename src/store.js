@@ -72,9 +72,16 @@ export class BoardStore {
         nextTicketNumber: 1,
         lastEventCursor: 0,
       };
-      await fs.mkdir(path.join(boardPath, 'tickets'), { recursive: true });
-      await atomicWriteFile(path.join(boardPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
-      await fs.writeFile(path.join(boardPath, 'events.jsonl'), '');
+      const stagingPath = path.join(absoluteRoot, `.crewboard.initializing-${crypto.randomUUID()}`);
+      await fs.mkdir(path.join(stagingPath, 'tickets'), { recursive: true });
+      try {
+        await atomicWriteFile(path.join(stagingPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
+        await fs.writeFile(path.join(stagingPath, 'events.jsonl'), '');
+        await fs.rename(stagingPath, boardPath);
+      } catch (error) {
+        await fs.rm(stagingPath, { recursive: true, force: true });
+        throw error;
+      }
       return new BoardStore(absoluteRoot, config);
     });
   }

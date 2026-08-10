@@ -37,3 +37,12 @@ test('help produces machine-readable output when requested', async () => {
 
   assert.match(help.usage, /^crewboard - a git-native coordination board/);
 });
+
+test('JSON mode emits a structured error envelope', async () => {
+  const root = await temporaryDirectory();
+  const result = spawnSync(process.execPath, [binary, 'show', 'CB-9999', '--json'], { cwd: root, encoding: 'utf8' });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(JSON.parse(result.stderr).error.message, /No Crewboard found/);
+});
