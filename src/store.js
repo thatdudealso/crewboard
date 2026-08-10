@@ -157,18 +157,25 @@ export class BoardStore {
 
   async appendEvent(action, { ticketId = null, actor = null, data = {} } = {}) {
     await this.refreshConfig();
-    this.config.lastEventCursor += 1;
+    const events = await this.readEvents();
+    const lastEventCursor = events.at(-1)?.cursor ?? 0;
     const event = {
-      cursor: this.config.lastEventCursor,
+      cursor: lastEventCursor + 1,
       at: now(),
       action,
       ticketId,
       actor,
       data,
     };
-    await this.saveConfig();
     await fs.appendFile(path.join(this.path, 'events.jsonl'), `${JSON.stringify(event)}\n`);
+    this.config.lastEventCursor = event.cursor;
+    await this.saveConfig();
     return event;
+  }
+
+  async readEvents() {
+    const contents = await fs.readFile(path.join(this.path, 'events.jsonl'), 'utf8');
+    return contents.split('\n').filter(Boolean).map((line) => JSON.parse(line));
   }
 
   async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, actor = null }) {
@@ -272,10 +279,9 @@ export class BoardStore {
 
   async activity(since = 0) {
     const cursor = eventCursor(since);
-    await this.refreshConfig();
-    const contents = await fs.readFile(path.join(this.path, 'events.jsonl'), 'utf8');
-    const events = contents.split('\n').filter(Boolean).map((line) => JSON.parse(line)).filter((event) => event.cursor > cursor);
-    return { events, cursor: this.config.lastEventCursor };
+    const allEvents = await this.readEvents();
+    const lastEventCursor = allEvents.at(-1)?.cursor ?? 0;
+    return { events: allEvents.filter((event) => event.cursor > cursor), cursor: lastEventCursor };
   }
 
   async inbox(agent, since = 0) {

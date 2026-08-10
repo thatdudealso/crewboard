@@ -82,8 +82,7 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
   const { positionals, options } = parseArguments(argv);
   const [command, ...arguments_] = positionals;
   if (!command || options.help || command === 'help' || command === '--help') {
-    process.stdout.write(`${usage}\n`);
-    return;
+    return render({ usage }, { json: Boolean(options.json), human: () => usage });
   }
   const json = Boolean(options.json);
 

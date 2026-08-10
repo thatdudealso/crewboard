@@ -64,3 +64,17 @@ test('simultaneous agents receive unique ticket IDs and activity cursors', async
   const board = await BoardStore.open(root);
   assert.deepEqual((await board.activity()).events.map((event) => event.cursor), [1, 2, 3, 4, 5]);
 });
+
+test('activity derives its polling cursor from durable events', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  await board.createTicket({ title: 'Durable activity' });
+  const configPath = path.join(root, '.crewboard', 'board.json');
+  const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+  config.lastEventCursor = 0;
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  const activity = await BoardStore.open(root).then((reopened) => reopened.activity(0));
+  assert.equal(activity.cursor, 1);
+  assert.equal(activity.events[0].action, 'ticket-created');
+});

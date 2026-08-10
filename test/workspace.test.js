@@ -23,3 +23,18 @@ test('a workspace registers boards and returns a cross-project ticket view', asy
   assert.deepEqual(result.projects.map((project) => project.name), ['API', 'Web']);
   assert.deepEqual(result.projects.map((project) => project.tickets[0].title), ['Publish contract', 'Wire client']);
 });
+
+test('simultaneous workspace registrations preserve every project', async () => {
+  const root = await temporaryDirectory();
+  const api = path.join(root, 'api');
+  const web = path.join(root, 'web');
+  const workspace = path.join(root, 'fleet-workspace.json');
+  await BoardStore.initialize(api, { name: 'API' });
+  await BoardStore.initialize(web, { name: 'Web' });
+  await initializeWorkspace(workspace);
+
+  await Promise.all([addBoardToWorkspace(workspace, api), addBoardToWorkspace(workspace, web)]);
+
+  const result = await listWorkspace(workspace);
+  assert.deepEqual(result.projects.map((project) => project.name).sort(), ['API', 'Web']);
+});

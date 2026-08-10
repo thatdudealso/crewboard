@@ -30,3 +30,10 @@ test('the CLI completes the agent workflow from init through import and activity
   const activity = command(root, 'activity', '--since', String(inbox.cursor));
   assert.equal(activity.events.at(-1).action, 'ticket-created');
 });
+
+test('help produces machine-readable output when requested', async () => {
+  const root = await temporaryDirectory();
+  const help = command(root, 'help');
+
+  assert.match(help.usage, /^crewboard - a git-native coordination board/);
+});
