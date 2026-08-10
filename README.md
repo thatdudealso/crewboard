@@ -36,7 +36,7 @@ crewboard web --workspace fleet-workspace.json
 
 Open the URL printed by the command. The board refreshes every two seconds while agents use the CLI. Captains can drag tickets across columns or within a column, edit the complete ticket and its thread, post a message, and move a ticket to another approved project. Project controls create, rename, archive, restore, organize, and rearrange projects.
 
-The visual board is a controller, not a second product. Every captain mutation writes to the same `.crewboard/` ticket files and JSONL activity log that agents use.
+The visual board is a controller, not a second product. Every captain mutation writes to the same `.crewboard/` ticket files and mergeable activity records that agents use.
 
 ## How a fleet coordinates
 
