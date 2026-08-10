@@ -5,6 +5,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Run `npm test` and `npm run lint` before handing off changes.
 - `README.md` is the public CLI and storage contract; keep it aligned with `src/cli.js` when commands change.
 - Board data is intentionally tracked in `.crewboard/`; do not add it to `.gitignore`.
+- The always-on fleet rollout contract is `agents/crewboard-fleet-contract.md`; apply `skills/crewboard-ticket/SKILL.md` whenever project work creates or updates a ticket.
 
 ## Maintaining this file
 

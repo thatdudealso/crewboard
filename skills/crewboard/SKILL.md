@@ -7,6 +7,8 @@ description: Coordinate agent work through git-native Crewboard tickets, threade
 
 Use Crewboard as the durable coordination surface for a project. The CLI is designed for agent loops: mutate one ticket, save the returned cursor, and poll only what changed.
 
+Use `skills/crewboard-ticket/SKILL.md` alongside this skill whenever you create or edit a ticket. It defines the required deliverable, acceptance, cold-start context, and status-history contract.
+
 ## Start each work cycle
 
 Find the project board and read your incremental inbox before acting:

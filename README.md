@@ -25,6 +25,19 @@ crewboard inbox --as captain --since 0 --json
 
 `crewboard init` creates a tracked `.crewboard/` directory in the current project. Add it to Git like any other project artifact.
 
+## Captain web board
+
+The CLI remains the agent interface. For the captain, `crewboard web` starts a self-contained local control surface over the same files. It always uses a calm dark theme and has no network assets, accounts, or separate database.
+
+```sh
+crewboard workspace init --file fleet-workspace.json
+crewboard web --workspace fleet-workspace.json
+```
+
+Open the URL printed by the command. The board refreshes every two seconds while agents use the CLI. Captains can drag tickets across columns or within a column, edit the complete ticket and its thread, post a message, and move a ticket to another approved project. Project controls create, rename, archive, restore, organize, and rearrange projects.
+
+The visual board is a controller, not a second product. Every captain mutation writes to the same `.crewboard/` ticket files and JSONL activity log that agents use.
+
 ## How a fleet coordinates
 
 1. An intake, build, review, or follow-up becomes a ticket.
@@ -59,7 +72,8 @@ Every command accepts `--json`, which writes one structured JSON result to stdou
 | `crewboard inbox --as <agent> [--since <cursor>]` | Read mentions and assignments addressed to one agent. |
 | `crewboard activity [--since <cursor>]` | Poll every board event after a cursor. |
 | `crewboard import tasks-axi <backlog.md> [--as <agent>]` | Import and synchronize a tasks-axi Markdown backlog. |
-| `crewboard workspace init\|add\|list [--file <path>]` | Register project boards and obtain a cross-project view. |
+| `crewboard web [--workspace <file>] [--port <port>]` | Start the local captain-facing dark web board. |
+| `crewboard workspace init\|add\|create\|discover\|approve\|rename\|archive\|restore\|organize\|arrange\|list [--file <path>]` | Manage project approval, provenance, organization, and cross-project views. |
 
 The default lifecycle is `inbox`, `ready`, `active`, `review`, and `done`. Set another comma-separated list at initialization when a project needs a different flow.
 
@@ -75,7 +89,7 @@ Crewboard intentionally stores its state in ordinary project files:
     CB-0001.md               YAML-compatible frontmatter, body, and message log
 ```
 
-Ticket metadata includes its ID, title, body, status, assignee, labels, priority, links, and created and updated timestamps. The Markdown ticket also contains its ordered message objects, including author, mentions, reply link, and timestamp. This keeps a ticket self-contained for code review and portable between clones.
+Ticket metadata includes its ID, title, body, status, assignee, labels, priority, links, status history, and created and updated timestamps. The Markdown ticket also contains its ordered message objects, including author, mentions, reply link, and timestamp. This keeps a ticket self-contained for code review and portable between clones.
 
 Commit `.crewboard/` with the work it represents. Git resolves independent ticket edits well, and an event log lets an agent cheaply understand changes without reading every ticket.
 
@@ -108,18 +122,31 @@ For each checkbox line, Crewboard uses the task ID before ` - ` as a stable sour
 crewboard import tasks-axi path/to/backlog.md --as board-keeper --json
 ```
 
-## Multiple projects
+## Projects, imports, and approval
 
-Keep one board in each repository, then register those boards in a workspace file wherever the captain coordinates the fleet:
+Keep one board in each repository, then register those boards in a workspace file wherever the captain coordinates the fleet. A direct `add` or `create` is an intentional captain action and becomes active immediately. Discovered projects are always pending until the captain approves each one.
 
 ```sh
 crewboard workspace init --file fleet-workspace.json
-crewboard workspace add ../api --file fleet-workspace.json
-crewboard workspace add ../web --file fleet-workspace.json
+crewboard workspace discover local --root ~/src --file fleet-workspace.json
+crewboard workspace discover claude --file fleet-workspace.json
+crewboard workspace discover chatgpt --root ~/Downloads/chatgpt-projects.json --file fleet-workspace.json
 crewboard workspace list --file fleet-workspace.json --json
 ```
 
-The workspace stores project paths and reads each registered board directly. It adds no service or central database, so a fleet can choose whether to commit its workspace file or keep it local.
+Each discovered project records an origin badge: `local`, `claude`, or `chatgpt`. Local discovery scans Git repositories below the configured root. Claude discovery checks accessible Claude Code project directories. ChatGPT discovery reads an explicit local export or known local export paths; when none exists, it returns a real `no source found` result and creates no fake candidates.
+
+```sh
+# Read pending IDs from workspace list, then approve with the local board path.
+crewboard workspace approve project-123 --path ../api --file fleet-workspace.json
+crewboard workspace organize project-123 platform --file fleet-workspace.json
+```
+
+Approval initializes a board only at the captain-supplied local path, then activates the project. The workspace stores paths and provenance but adds no service or central database, so a fleet can choose whether to commit its workspace file or keep it local.
+
+## Always-on fleet contract
+
+Every agent doing project work uses Crewboard for tickets and ticket messages. The durable rollout contract is [agents/crewboard-fleet-contract.md](agents/crewboard-fleet-contract.md); the ticket quality contract is [skills/crewboard-ticket/SKILL.md](skills/crewboard-ticket/SKILL.md). Fleet installers can wire both artifacts into agent instructions after merge.
 
 ## Development
 
