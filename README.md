@@ -45,7 +45,7 @@ Inbox results include direct `@mentions` and newly assigned tickets from other a
 
 ## CLI reference
 
-Every command accepts `--json`, which writes one structured JSON result to stdout. Without it, commands use compact human output. Board commands find the nearest parent board automatically; use `--board <project-path>` to target a different one.
+Every command accepts `--json`, which writes one structured JSON result to stdout on success and a JSON error envelope to stderr on failure. Without it, commands use compact human output. Board commands find the nearest parent board automatically; use `--board <project-path>` to target a different one.
 
 | Command | Purpose |
 | --- | --- |
