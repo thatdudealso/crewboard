@@ -22,6 +22,14 @@ function generatedProjectId(value) {
   return `project-${crypto.createHash('sha256').update(value).digest('hex').slice(0, 12)}`;
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function normalizeProject(project, index) {
   const timestamp = project.createdAt || now();
   const boardPath = absolutePath(project.boardPath || project.path);
@@ -167,7 +175,7 @@ function extractChatGptProjects(exported) {
     boardPath: candidate.path || candidate.localPath || candidate.directory || null,
     origin: 'chatgpt',
     sourceLocation: null,
-    sourceId: String(candidate.id ?? candidate.uuid ?? candidate.project_id ?? crypto.createHash('sha256').update(JSON.stringify(candidate, Object.keys(candidate).sort())).digest('hex').slice(0, 24)),
+    sourceId: String(candidate.id ?? candidate.uuid ?? candidate.project_id ?? crypto.createHash('sha256').update(canonicalJson(candidate)).digest('hex').slice(0, 24)),
   }));
 }
 

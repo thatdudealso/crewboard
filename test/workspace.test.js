@@ -124,3 +124,18 @@ test('a local ChatGPT export preserves every pending project candidate', async (
   assert.deepEqual(updatedDiscovery.discovered.map((project) => project.name), ['New project']);
   assert.equal((await listWorkspace(workspace)).pendingProjects.length, 3);
 });
+
+test('nested ChatGPT candidate fields contribute to fallback identity', async () => {
+  const root = await temporaryDirectory();
+  const workspace = path.join(root, 'fleet-workspace.json');
+  const exportPath = path.join(root, 'chatgpt-projects.json');
+  await fs.writeFile(exportPath, JSON.stringify({ projects: [
+    { name: 'Research', metadata: { remoteId: 'a' } },
+    { name: 'Research', metadata: { remoteId: 'b' } },
+  ] }));
+  await initializeWorkspace(workspace);
+
+  const discovery = await discoverProjects(workspace, { source: 'chatgpt', root: exportPath });
+  assert.equal(discovery.discovered.length, 2);
+  assert.equal(new Set(discovery.discovered.map((project) => project.sourceId)).size, 2);
+});
