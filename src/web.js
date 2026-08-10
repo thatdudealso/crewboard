@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
 import { BoardStore, transferTicket } from './store.js';
@@ -22,6 +23,13 @@ function send(response, status, body, contentType = 'text/html; charset=utf-8') 
 
 function sendJson(response, status, body) {
   send(response, status, `${JSON.stringify(body)}\n`, 'application/json; charset=utf-8');
+}
+
+function assertCsrf(request, csrfToken) {
+  if (request.headers['x-crewboard-csrf'] === csrfToken) return;
+  const error = new Error('Invalid CSRF token.');
+  error.statusCode = 403;
+  throw error;
 }
 
 async function readBody(request) {
@@ -72,7 +80,8 @@ async function snapshot(workspaceFile) {
   };
 }
 
-async function api(request, response, workspaceFile) {
+async function api(request, response, workspaceFile, csrfToken) {
+  if (request.method !== 'GET') assertCsrf(request, csrfToken);
   const parts = pathParts(request.url);
   if (request.method === 'GET' && parts.join('/') === 'api/board') return sendJson(response, 200, await snapshot(workspaceFile));
   if (request.method === 'POST' && parts.join('/') === 'api/projects/discover') {
@@ -139,7 +148,7 @@ async function api(request, response, workspaceFile) {
   return sendJson(response, 404, { error: { message: 'Unknown ticket API route.' } });
 }
 
-function page() {
+function page(csrfToken) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -173,8 +182,9 @@ button,input,select,textarea { font:inherit; } button { cursor:pointer; } .app {
 <div class="modal-backdrop" id="modal-backdrop"><section class="modal" id="modal"></section></div>
 <script>
 const state={data:null,view:'board',projectId:null,notice:''};
+const csrfToken=${JSON.stringify(csrfToken)};
 const escapeHtml=(value)=>String(value??'').replace(/[&<>'"]/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
-const api=async (url,options={})=>{const response=await fetch(url,{headers:{'content-type':'application/json'},...options,body:options.body?JSON.stringify(options.body):undefined});const data=await response.json();if(!response.ok)throw new Error(data.error?.message||'Request failed.');return data;};
+const api=async (url,options={})=>{const response=await fetch(url,{headers:{'content-type':'application/json','x-crewboard-csrf':csrfToken},...options,body:options.body?JSON.stringify(options.body):undefined});const data=await response.json();if(!response.ok)throw new Error(data.error?.message||'Request failed.');return data;};
 const project=()=>state.data?.projects.find((item)=>item.id===state.projectId)||state.data?.projects[0];
 const allMessages=()=>{const item=project();return item?(item.tickets||[]).flatMap((ticket)=>ticket.messages.map((message)=>({...message,ticket}))).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)):[];};
 async function refresh(){try{state.data=await api('/api/board');if(!state.projectId&&state.data.projects.length)state.projectId=state.data.projects[0].id;render();}catch(error){state.notice=error.message;render();}}
@@ -199,14 +209,15 @@ refresh();setInterval(()=>{const editing=document.activeElement?.matches('input,
 
 export async function startWebServer({ cwd = process.cwd(), workspaceFile = 'crewboard-workspace.json', port = DEFAULT_PORT, host = '127.0.0.1' } = {}) {
   const resolvedWorkspace = path.resolve(cwd, workspaceFile);
+  const csrfToken = crypto.randomBytes(32).toString('hex');
   await ensureWorkspace(resolvedWorkspace);
   const server = http.createServer(async (request, response) => {
     try {
-      if (request.url === '/' && request.method === 'GET') return send(response, 200, page());
-      if (request.url.startsWith('/api/')) return await api(request, response, resolvedWorkspace);
+      if (request.url === '/' && request.method === 'GET') return send(response, 200, page(csrfToken));
+      if (request.url.startsWith('/api/')) return await api(request, response, resolvedWorkspace, csrfToken);
       return send(response, 404, 'Not found', 'text/plain; charset=utf-8');
     } catch (error) {
-      return sendJson(response, 400, { error: { message: error.message } });
+      return sendJson(response, error.statusCode || 400, { error: { message: error.message } });
     }
   });
   await new Promise((resolve, reject) => {
@@ -214,5 +225,5 @@ export async function startWebServer({ cwd = process.cwd(), workspaceFile = 'cre
     server.listen(Number(port), host, resolve);
   });
   const address = server.address();
-  return { server, workspaceFile: resolvedWorkspace, url: `http://${host}:${address.port}` };
+  return { server, workspaceFile: resolvedWorkspace, url: `http://${host}:${address.port}`, csrfToken };
 }
