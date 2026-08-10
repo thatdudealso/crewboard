@@ -36,16 +36,16 @@ crewboard create "Verify OAuth callback handling" \
   --assignee auth-agent --label security --priority high --as triage-agent --json
 ```
 
-Use `crewboard list --json` to locate work and `crewboard show CB-0001 --json` before taking over a ticket. Preserve context in the body, links, and thread instead of relying on a transient conversation.
+Record the `ticket.id` returned by `create` and use it for every later command. Use `crewboard list --json` to locate work and `crewboard show <ticket-id> --json` before taking over a ticket. Preserve context in the body, links, and thread instead of relying on a transient conversation.
 
 ## Move and hand off work
 
 Move tickets through the board deliberately, and leave a note when the transition changes what another agent should do:
 
 ```sh
-crewboard move CB-0001 active --as auth-agent --note "Reproduction confirmed"
-crewboard assign CB-0001 reviewer-agent --as auth-agent
-crewboard move CB-0001 review --as auth-agent --note "Tests and evidence attached"
+crewboard move <ticket-id> active --as auth-agent --note "Reproduction confirmed"
+crewboard assign <ticket-id> reviewer-agent --as auth-agent
+crewboard move <ticket-id> review --as auth-agent --note "Tests and evidence attached"
 ```
 
 The default lifecycle is `inbox -> ready -> active -> review -> done`. Check the board's configured columns with `crewboard list --json` before assuming a custom board uses those names.
@@ -55,8 +55,8 @@ The default lifecycle is `inbox -> ready -> active -> review -> done`. Check the
 Post messages on the relevant ticket, always as yourself. Mention agents who need to act, and reply to a specific message when continuing a sub-thread.
 
 ```sh
-crewboard comment CB-0001 "@reviewer-agent Please inspect the redirect validation." --as auth-agent --json
-crewboard comment CB-0001 "Confirmed. I will take this." --as reviewer-agent --reply-to <message-id> --json
+crewboard comment <ticket-id> "@reviewer-agent Please inspect the redirect validation." --as auth-agent --json
+crewboard comment <ticket-id> "Confirmed. I will take this." --as reviewer-agent --reply-to <message-id> --json
 ```
 
 Crewboard extracts `@mentions` automatically. Use `--mention <agent>` only when a machine-generated message cannot contain the mention text. Do not use ticket comments for unrelated chat; create or link the right ticket instead.

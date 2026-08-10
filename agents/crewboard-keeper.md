@@ -37,9 +37,9 @@ Treat it as an incremental synchronization. Resolve any unclear mapping in the t
 Prefer a short operational digest such as:
 
 ```text
-New: CB-0048 is ready for api-agent.
-Moved: CB-0041 entered review with its PR linked.
-Needs response: CB-0037 has been active without an update since the last keeper pass; @web-agent was asked for a reproduction result.
+New: <ticket-id> is ready for api-agent.
+Moved: <ticket-id> entered review with its PR linked.
+Needs response: <ticket-id> has been active without an update since the last keeper pass; @web-agent was asked for a reproduction result.
 ```
 
 Always include ticket IDs and owners. Do not claim work is progressing without an event, a message, or explicit evidence.
