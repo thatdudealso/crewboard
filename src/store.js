@@ -8,7 +8,7 @@ import {
   buildTree,
   decorateTicket,
   normalizeTicketType,
-  progressFor,
+  PARENT_TYPE,
 } from './hierarchy.js';
 import { generateTicketId, LEGACY_TICKET_ID, resolveTicketQuery, ticketFileName } from './ids.js';
 import { withFileLock } from './lock.js';
@@ -447,9 +447,16 @@ export class BoardStore {
     }
     const nextType = changes.type ?? ticket.type ?? 'task';
     const nextParent = changes.parent !== undefined ? changes.parent : ticket.parent;
+    if (nextParent === ticket.id) throw new Error('A ticket cannot be its own parent.');
     const parentTicket = nextParent ? tickets.find((item) => item.id === nextParent) : null;
     if (changes.type !== undefined || changes.parent !== undefined) {
       assertParentLink({ type: nextType, parent: nextParent, parentTicket });
+    }
+    if (changes.type !== undefined && nextType !== (ticket.type ?? 'task')) {
+      const blocking = tickets.filter((item) => item.parent === ticket.id && !item.archivedAt && PARENT_TYPE[item.type ?? 'task'] !== nextType);
+      if (blocking.length) {
+        throw new Error(`Cannot change ${ticket.id} to a ${nextType} while it has incompatible children: ${blocking.map((item) => `${item.id} (${item.type ?? 'task'})`).join(', ')}. Reparent them first.`);
+      }
     }
     const original = { ...ticket };
     Object.assign(ticket, changes);
@@ -627,9 +634,6 @@ export class BoardStore {
     return { agent, messages, assignments, cursor: activity.cursor };
   }
 
-  progress(ticket) {
-    return progressFor(ticket, [], this.config.columns);
-  }
 }
 
 export async function withBoardMutationLocks(boards, operation) {
@@ -654,10 +658,11 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
     if (sourceTicket.archivedAt && (!recovered || sourceTicket.transferredTo?.projectPath !== destinationBoard.root)) {
       throw new Error(`Ticket is already archived: ${ticketId}`);
     }
+    const transferredType = sourceTicket.type === 'subtask' ? 'task' : sourceTicket.type;
     const created = recovered ? { ticket: recovered, event: null } : await destinationBoard.createTicketUnlocked({
       title: sourceTicket.title,
       body: sourceTicket.body,
-      type: sourceTicket.type,
+      type: transferredType,
       parent: null,
       status: destinationBoard.config.columns.includes(sourceTicket.status) ? sourceTicket.status : destinationBoard.config.columns[0],
       assignee: sourceTicket.assignee,
@@ -671,6 +676,7 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
         type: 'crewboard-transfer',
         projectPath: sourceBoard.root,
         ticketId: sourceTicket.id,
+        originalType: sourceTicket.type,
         previousSource: sourceTicket.source ?? null,
       },
       archivedAt: now(),
@@ -681,6 +687,16 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       transferredTo: { projectId: destinationProjectId, ticketId: created.ticket.id, projectPath: destinationBoard.root },
     });
     const restored = await destinationBoard.restoreTicketUnlocked(created.ticket.id, { actor });
-    return { ticket: restored.ticket, sourceTicket: archived.ticket, event: restored.event || created.event };
+    const alreadyRecorded = sourceTicket.type === 'subtask' && (await destinationBoard.readEvents()).some((event) => (
+      event.action === 'ticket-demoted-on-transfer' && event.ticketId === created.ticket.id
+    ));
+    const demotionEvent = sourceTicket.type === 'subtask' && !alreadyRecorded
+      ? await destinationBoard.appendEvent('ticket-demoted-on-transfer', {
+        ticketId: created.ticket.id,
+        actor,
+        data: { from: 'subtask', to: 'task', sourceTicketId: sourceTicket.id },
+      })
+      : null;
+    return { ticket: restored.ticket, sourceTicket: archived.ticket, event: demotionEvent || restored.event || created.event };
   });
 }

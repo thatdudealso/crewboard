@@ -309,7 +309,7 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
     if (kind !== 'tasks-axi' || !sourcePath) throw new Error('Usage: crewboard import tasks-axi <backlog.md>.');
     const board = await BoardStore.open(root);
     const result = await importTasksAxi(board, path.resolve(cwd, sourcePath), { actor: options.as || 'tasks-axi' });
-    return render(result, { json, human: (value) => `tasks-axi sync: ${value.imported.length} imported, ${value.updated.length} updated, ${value.unchanged.length} unchanged.` });
+    return render(result, { json, human: (value) => `tasks-axi sync: ${value.imported.length} imported, ${value.updated.length} updated, ${value.unchanged.length} unchanged, ${value.normalizations.length} priority normalized.` });
   }
   throw new Error(`Unknown command: ${command}. Run \`crewboard help\`.`);
 }

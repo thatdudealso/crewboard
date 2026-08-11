@@ -260,6 +260,37 @@ test('a ticket can move across projects while preserving its conversation', asyn
   assert.equal((await source.getTicket(ticket.id)).transferredTo.ticketId, transferred.ticket.id);
 });
 
+test('transferring a subtask demotes it to a destination task and records the change', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Source story', type: 'story' });
+  const task = await source.createTicket({ title: 'Source task', type: 'task', parent: story.ticket.id });
+  const subtask = await source.createTicket({ title: 'Transfer me', type: 'subtask', parent: task.ticket.id });
+
+  const transferred = await transferTicket(source, destination, subtask.ticket.id, { actor: 'captain-web' });
+
+  assert.equal(transferred.ticket.type, 'task');
+  assert.equal(transferred.ticket.parent, null);
+  assert.deepEqual((await destination.getTicketDetail(transferred.ticket.id)).activity.find((event) => event.action === 'ticket-demoted-on-transfer')?.data, {
+    from: 'subtask', to: 'task', sourceTicketId: subtask.ticket.id,
+  });
+});
+
+test('type changes reject parent links that would invalidate existing children', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const story = await board.createTicket({ title: 'Story', type: 'story' });
+  const task = await board.createTicket({ title: 'Task', type: 'task', parent: story.ticket.id });
+  const otherTask = await board.createTicket({ title: 'Other task', type: 'task', parent: story.ticket.id });
+  const subtask = await board.createTicket({ title: 'Subtask', type: 'subtask', parent: task.ticket.id });
+
+  await assert.rejects(() => board.updateTicket(story.ticket.id, { type: 'task' }), new RegExp(`incompatible children: ${task.ticket.id} \\(task\\)`));
+  await assert.rejects(() => board.updateTicket(task.ticket.id, { type: 'subtask', parent: otherTask.ticket.id }), new RegExp(`incompatible children: ${subtask.ticket.id} \\(subtask\\)`));
+  const standalone = await board.createTicket({ title: 'Standalone task' });
+  await assert.rejects(() => board.updateTicket(standalone.ticket.id, { type: 'subtask', parent: standalone.ticket.id }), /cannot be its own parent/);
+});
+
 test('a failed source archival leaves a recoverable inactive transfer copy', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });

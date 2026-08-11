@@ -146,7 +146,7 @@ The import bridge understands the Markdown task lines emitted by tasks-axi, for 
 - [x] crewboard-docs - Write the docs (kind: docs) (pr: https://github.com/thatdudealso/crewboard/pull/1)
 ```
 
-For each checkbox line, Crewboard uses the task ID before ` - ` as a stable source key. `[x]` maps to `done`; an open task maps to `inbox`, except `state: working` maps to `active` and `state: queued` maps to `ready` when those columns exist. `kind`, `assignee`, `priority`, `pr`, `link`, and `file` metadata map to labels, assignee, priority, and links. A repeat import updates changed mapped tickets and leaves unchanged tickets alone.
+For each checkbox line, Crewboard uses the task ID before ` - ` as a stable source key. `[x]` maps to `done`; an open task maps to `inbox`, except `state: working` maps to `active` and `state: queued` maps to `ready` when those columns exist. `kind`, `assignee`, `priority`, `pr`, `link`, and `file` metadata map to labels, assignee, priority, and links. Unknown imported priorities become `medium` and are listed per ticket in the JSON `normalizations` output. A repeat import updates changed mapped tickets and leaves unchanged tickets alone.
 
 ```sh
 crewboard import tasks-axi path/to/backlog.md --as board-keeper --json

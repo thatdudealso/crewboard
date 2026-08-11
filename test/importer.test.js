@@ -46,6 +46,24 @@ test('imported tasks-axi tickets receive short ids and stay idempotent', async (
   assert.equal(second.unchanged[0].id, first.imported[0].id);
 });
 
+test('unknown import priorities fall back to medium and report each normalization', async () => {
+  const root = await temporaryDirectory();
+  const source = path.join(root, 'backlog.md');
+  await fs.writeFile(source, '- [ ] crewboard-build - Build the board (priority: blocker)\n');
+  const board = await BoardStore.initialize(root);
+
+  const result = await importTasksAxi(board, source);
+
+  assert.equal(result.imported[0].priority, 'medium');
+  assert.deepEqual(result.normalizations, [{
+    ticketId: result.imported[0].id,
+    sourceKey: 'id:crewboard-build',
+    field: 'priority',
+    from: 'blocker',
+    to: 'medium',
+  }]);
+});
+
 test('simultaneous imports create each source task once', async () => {
   const root = await temporaryDirectory();
   const source = path.join(root, 'backlog.md');
