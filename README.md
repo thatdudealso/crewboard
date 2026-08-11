@@ -27,17 +27,19 @@ Ticket ids are short and readable (for example `design-the-onboarding-flow-a3f1`
 
 ## Work hierarchy
 
-Boards use **project > story > task > subtask**. The project is the board itself. Stories, tasks, and subtasks are tickets linked with `--type` and `--parent`:
+Boards use **project > story > task > subtask**, matching how Linear nests parent/sub-issues and how Jira nests epic/story/sub-task work. The project is the board itself. Stories, tasks, and subtasks are tickets linked with `--type` and `--parent`:
 
 ```sh
-crewboard create "Complete pet diary app with information collection" --type story
-crewboard create "Premium features" --type task --parent <story-id>
+crewboard create "Complete pet diary app with information collection" --type story --priority high --as firstmate
+crewboard create "Premium features" --type task --parent <story-id> --priority p1
 crewboard create "Digestive Pulse analysis" --type subtask --parent <task-id>
 crewboard tree
-crewboard show <story-id>
+crewboard show <task-id>
 ```
 
-`crewboard show` prints ancestors, children, and progress roll-up (`completed/total`). Stories roll up descendant tasks; tasks roll up subtasks. See [docs/examples/pet-diary.md](docs/examples/pet-diary.md).
+`crewboard show` prints breadcrumb, reporter, assigned-by, priority, children table, progress roll-up, activity (newest first), and comments. Priorities use `highest|high|medium|low|lowest` (aliases `p0`-`p4`, `normal`→`medium`). See [docs/examples/pet-diary.md](docs/examples/pet-diary.md).
+
+The web board adds backlog and structure views, combined filters with visible chips, card quick actions, type/priority icons, and a Jira-style detail panel. Screenshots for captain review live under `docs/examples/screenshots/`.
 
 ## Fleet leader
 

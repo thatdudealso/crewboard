@@ -238,17 +238,19 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
     const [id] = arguments_;
     if (!id) throw new Error('Usage: crewboard show <ticket-id>.');
     const board = await BoardStore.open(root);
-    const ticket = await board.getTicketView(id);
-    const tree = await board.tree(ticket.id);
-    return render({ ticket, tree }, { json, human: (value) => {
-      const ancestors = value.ticket.ancestors?.length
-        ? `Ancestors\n${value.ticket.ancestors.map((item) => `- ${item.type}  ${item.id}  ${item.title}`).join('\n')}\n\n`
+    const ticket = await board.getTicketDetail(id);
+    return render(ticket, { json, human: (value) => {
+      const ancestors = value.breadcrumb?.length
+        ? `Breadcrumb\n${value.breadcrumb.map((item) => `- ${item.kind}${item.id ? `  ${item.id}` : ''}  ${item.title}`).join('\n')}\n\n`
         : '';
-      const children = (value.tree.nodes || []).length
-        ? `Children\n${value.tree.nodes.map((node) => renderTreeNode(node).join('\n')).join('\n')}\n\n`
+      const children = (value.ticket.childTickets || []).length
+        ? `Children\n${value.ticket.childTickets.map((child) => `- ${child.type}  ${child.id}  ${child.status.padEnd(7)} ${child.title}${child.assignee ? ` @${child.assignee}` : ''} [${child.progress.completed}/${child.progress.total}]`).join('\n')}\n\n`
         : '';
-      const messages = value.ticket.messages.length ? `\n\nMessages\n${value.ticket.messages.map((message) => `- ${message.createdAt} @${message.author}: ${message.body}`).join('\n')}` : '';
-      return `${ancestors}${humanTicket(value.ticket)}\nProgress: ${value.ticket.progress.completed}/${value.ticket.progress.total} ${value.ticket.progress.kind}\n\n${value.ticket.body || '(no description)'}\n\n${children}${messages}`.trim();
+      const activity = value.activity?.length
+        ? `Activity\n${value.activity.map((entry) => `- ${entry.at}  ${entry.action}${entry.actor ? ` @${entry.actor}` : ''}`).join('\n')}\n\n`
+        : '';
+      const comments = value.comments?.length ? `Comments\n${value.comments.map((message) => `- ${message.createdAt} @${message.author}: ${message.body}`).join('\n')}` : '';
+      return `${ancestors}${humanTicket(value.ticket)}\nReporter: ${value.ticket.reporter ? `@${value.ticket.reporter}` : '—'}${value.ticket.assignedBy ? ` · assigned by @${value.ticket.assignedBy}` : ''}\nPriority: ${value.ticket.priority}\nProgress: ${value.ticket.progress.completed}/${value.ticket.progress.total} ${value.ticket.progress.kind}\nCreated: ${value.ticket.createdAt}\nUpdated: ${value.ticket.updatedAt}\n\n${value.ticket.body || '(no description)'}\n\n${children}${activity}${comments}`.trim();
     } });
   }
   if (command === 'tree') {

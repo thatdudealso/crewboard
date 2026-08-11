@@ -84,10 +84,22 @@ export function progressFor(ticket, tickets, columns) {
 
 export function decorateTicket(ticket, tickets, columns) {
   const progress = progressFor(ticket, tickets, columns);
+  const childTickets = childrenOf(ticket.id, tickets);
   return {
     ...ticket,
+    priority: ticket.priority || 'medium',
+    reporter: ticket.reporter ?? null,
     progress,
-    children: childrenOf(ticket.id, tickets).map((child) => child.id),
+    children: childTickets.map((child) => child.id),
+    childTickets: childTickets.map((child) => ({
+      id: child.id,
+      title: child.title,
+      type: child.type,
+      status: child.status,
+      assignee: child.assignee ?? null,
+      priority: child.priority || 'medium',
+      progress: progressFor(child, tickets, columns),
+    })),
     ancestors: ancestorsOf(ticket, tickets).map((item) => ({ id: item.id, title: item.title, type: item.type })),
   };
 }

@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { generateTicketId, resolveTicketQuery, slugifyTitle } from '../src/ids.js';
 import { buildTree, progressFor } from '../src/hierarchy.js';
+import { normalizePriority } from '../src/priority.js';
 import { BoardStore } from '../src/store.js';
 import { temporaryDirectory } from '../test-support/helpers.js';
 
@@ -99,6 +100,30 @@ Body
   const migrated = await board.getTicket(legacyId);
   assert.match(migrated.id, /^legacy-ticket-[a-f0-9]{4}$/);
   assert.ok(migrated.aliases.includes(legacyId));
+});
+
+test('ticket detail exposes reporter, activity, breadcrumb, and child table progress', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root, { name: 'Pet Diary' });
+  const story = await board.createTicket({ title: 'Complete pet diary app', type: 'story', actor: 'firstmate', priority: 'high' });
+  const task = await board.createTicket({ title: 'Premium features', type: 'task', parent: story.ticket.id, actor: 'firstmate', assignee: 'builder', priority: 'p1' });
+  await board.createTicket({ title: 'Digestive Pulse analysis', type: 'subtask', parent: task.ticket.id, status: 'done', actor: 'builder' });
+  await board.moveTicket(task.ticket.id, 'active', { actor: 'builder', note: 'Started' });
+
+  const detail = await board.getTicketDetail(task.ticket.id);
+  assert.equal(detail.ticket.reporter, 'firstmate');
+  assert.equal(detail.ticket.priority, 'high');
+  assert.equal(detail.ticket.assignedBy, 'firstmate');
+  assert.equal(detail.breadcrumb[0].kind, 'project');
+  assert.equal(detail.ticket.childTickets.length, 1);
+  assert.equal(detail.ticket.progress.completed, 1);
+  assert.ok(detail.activity.some((entry) => entry.action === 'ticket-moved'));
+});
+
+test('priority aliases map onto the Jira-style scale', async () => {
+  assert.equal(normalizePriority('normal'), 'medium');
+  assert.equal(normalizePriority('p0'), 'highest');
+  assert.throws(() => normalizePriority('nope'), /Unknown priority/);
 });
 
 test('firstmate is registered as the board leader', async () => {

@@ -12,6 +12,7 @@ import {
 } from './hierarchy.js';
 import { generateTicketId, LEGACY_TICKET_ID, resolveTicketQuery, ticketFileName } from './ids.js';
 import { withFileLock } from './lock.js';
+import { normalizePriority } from './priority.js';
 import { DEFAULT_COLUMNS, cleanList, eventCursor, mentionsIn, now, pathExists } from './utils.js';
 
 const BOARD_DIRECTORY = '.crewboard';
@@ -26,8 +27,9 @@ function frontmatter(ticket) {
     status: ticket.status,
     assignee: ticket.assignee ?? null,
     assignedBy: ticket.assignedBy ?? null,
+    reporter: ticket.reporter ?? null,
     labels: ticket.labels ?? [],
-    priority: ticket.priority ?? 'normal',
+    priority: ticket.priority ?? 'medium',
     links: ticket.links ?? [],
     aliases: ticket.aliases ?? [],
     source: ticket.source ?? null,
@@ -66,8 +68,10 @@ function parseTicket(contents, filePath) {
     type: 'task',
     parent: null,
     assignedBy: null,
+    reporter: null,
     aliases: [],
     ...values,
+    priority: normalizePriority(values.priority ?? 'medium', { fallback: 'medium', strict: false }),
     body: contents.slice(header[0].length, footerIndex).trim(),
     messages: JSON.parse(contents.slice(messageStart, messageEnd)),
   };
@@ -256,6 +260,33 @@ export class BoardStore {
     return decorateTicket(ticket, tickets, this.config.columns);
   }
 
+  async getTicketDetail(id) {
+    const tickets = await this.listTicketRecords({ includeArchived: true });
+    const ticket = decorateTicket(resolveTicketQuery(id, tickets), tickets, this.config.columns);
+    const events = (await this.readEvents()).filter((event) => event.ticketId === ticket.id || (ticket.aliases || []).includes(event.ticketId));
+    const activity = events
+      .filter((event) => event.action !== 'message-posted')
+      .map((event) => ({
+        id: event.id,
+        at: event.at,
+        action: event.action,
+        actor: event.actor,
+        data: event.data,
+      }))
+      .sort((left, right) => right.at.localeCompare(left.at) || right.id.localeCompare(left.id));
+    const comments = [...(ticket.messages || [])].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      ticket,
+      activity,
+      comments,
+      breadcrumb: [
+        { kind: 'project', id: null, title: this.config.name },
+        ...ticket.ancestors.map((item) => ({ kind: item.type, id: item.id, title: item.title })),
+        { kind: ticket.type, id: ticket.id, title: ticket.title },
+      ],
+    };
+  }
+
   async listTickets({ status, assignee, includeArchived = false } = {}) {
     const tickets = await this.listTicketRecords({ includeArchived });
     return tickets
@@ -349,16 +380,17 @@ export class BoardStore {
     }
   }
 
-  async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, messages = [], position = null, actor = null, type, parent = null }) {
-    return this.withMutationLock(() => this.createTicketUnlocked({ title, body, status, assignee, labels, priority, links, source, messages, position, actor, type, parent }));
+  async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'medium', links = [], source = null, messages = [], position = null, actor = null, type, parent = null, reporter = null }) {
+    return this.withMutationLock(() => this.createTicketUnlocked({ title, body, status, assignee, labels, priority, links, source, messages, position, actor, type, parent, reporter }));
   }
 
-  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, messages = [], position = null, archivedAt = null, actor = null, type, parent = null, assignedBy = null }) {
+  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'medium', links = [], source = null, messages = [], position = null, archivedAt = null, actor = null, type, parent = null, assignedBy = null, reporter = null }) {
     await this.refreshConfig();
     await ensureAgentsRegistry(this.path);
     if (!title?.trim()) throw new Error('A ticket title is required.');
     this.assertStatus(status);
     const ticketType = normalizeTicketType(type);
+    const ticketPriority = normalizePriority(priority);
     const existingTickets = await this.listTicketRecordsUnlocked({ includeArchived: true });
     const parentId = parent ? resolveTicketQuery(parent, existingTickets).id : null;
     const parentTicket = parentId ? existingTickets.find((ticket) => ticket.id === parentId) : null;
@@ -373,8 +405,9 @@ export class BoardStore {
       status,
       assignee: assignee || null,
       assignedBy: assignedBy ?? (assignee ? actor || null : null),
+      reporter: reporter || actor || null,
       labels: cleanList(labels),
-      priority,
+      priority: ticketPriority,
       links: cleanList(links),
       aliases: [],
       source,
@@ -408,6 +441,7 @@ export class BoardStore {
     }
     if (changes.status !== undefined) this.assertStatus(changes.status);
     if (changes.type !== undefined) changes.type = normalizeTicketType(changes.type, { required: true });
+    if (changes.priority !== undefined) changes.priority = normalizePriority(changes.priority);
     if (changes.parent !== undefined && changes.parent) {
       changes.parent = resolveTicketQuery(changes.parent, tickets).id;
     }
@@ -628,6 +662,7 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       status: destinationBoard.config.columns.includes(sourceTicket.status) ? sourceTicket.status : destinationBoard.config.columns[0],
       assignee: sourceTicket.assignee,
       assignedBy: sourceTicket.assignedBy,
+      reporter: sourceTicket.reporter,
       labels: sourceTicket.labels,
       priority: sourceTicket.priority,
       links: sourceTicket.links,

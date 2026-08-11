@@ -32,7 +32,7 @@ export function parseTasksAxi(markdown) {
       state: details.state || null,
       assignee: details.assignee || details.owner || null,
       labels: cleanList([details.label || '', details.labels || '', details.kind || '']),
-      priority: details.priority || 'normal',
+      priority: details.priority || 'medium',
       links: cleanList([details.pr || '', details.link || '', details.file || '']),
     });
   }
