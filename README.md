@@ -68,7 +68,7 @@ crewboard web --workspace fleet-workspace.json
 
 Default output is the attention subset: review requested of the captain, the captain's mergeable-and-green PRs awaiting merge, conflicts or failing checks on the captain's PRs, plus issues/PRs assigned to or mentioning the captain. `--all` (CLI) or **Show all open items** (web) includes every open PR collected for those repos. Each item links to its GitHub URL and reports draft, review, mergeable, and CI state.
 
-If `gh` is missing, unauthenticated, or GitHub is unreachable, both CLI and web report an honest unavailable / no-source state — never an empty all-clear. The web **GitHub attention** view loads on demand with a manual Refresh control and last-refreshed timestamp; board rendering never waits on GitHub.
+If `gh` is missing, unauthenticated, or GitHub is unreachable, both CLI and web report an honest unavailable / no-source state - never an empty all-clear. The web **GitHub attention** view loads on demand with a manual Refresh control and last-refreshed timestamp; board rendering never waits on GitHub.
 
 ## How a fleet coordinates
 

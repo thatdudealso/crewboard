@@ -147,7 +147,7 @@ function isCaptain(login, candidate) {
 
 /**
  * Classify a PR or issue into attention reasons and whether it needs the captain.
- * Pure function — unit-tested with fixtures; no network.
+ * Pure function - unit-tested with fixtures; no network.
  */
 export function classifyAttentionItem(raw, { login, kind = 'pr' } = {}) {
   const assignees = (raw.assignees || []).map((entry) => entry?.login || entry).filter(Boolean);
@@ -214,7 +214,6 @@ export function classifyAttentionItem(raw, { login, kind = 'pr' } = {}) {
     needsAttention: reasons.length > 0,
   };
 }
-
 export async function suggestReposFromProjects(projects, { readRemote = defaultReadRemote } = {}) {
   const suggestions = [];
   for (const project of projects || []) {
@@ -435,4 +434,3 @@ export async function assembleGithubAttention({
     refreshedAt: clock(),
   };
 }
-
