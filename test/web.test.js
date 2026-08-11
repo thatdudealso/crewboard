@@ -82,3 +82,28 @@ test('the local web controller creates and moves tickets through the shared work
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test('the web board serves the extracted dark UI assets', async () => {
+  const root = await temporaryDirectory();
+  const workspaceFile = path.join(root, 'fleet-workspace.json');
+  const { server, url } = await startWebServer({ cwd: root, workspaceFile, port: 0 });
+  try {
+    const html = await request(`${url}/`);
+    assert.match(html, /assets\/app\.css/);
+    assert.match(html, /assets\/app\.js/);
+    const css = await fetch(`${url}/assets/app.css`);
+    assert.equal(css.status, 200);
+    assert.match(css.headers.get('content-type') || '', /text\/css/);
+    const cssText = await css.text();
+    assert.match(cssText, /--shadow-sm/);
+    assert.match(cssText, /-webkit-line-clamp/);
+    const js = await fetch(`${url}/assets/app.js`);
+    assert.equal(js.status, 200);
+    assert.match(js.headers.get('content-type') || '', /javascript/);
+    const jsText = await js.text();
+    assert.match(jsText, /titleAttr/);
+    assert.match(jsText, /ticket-title/);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});

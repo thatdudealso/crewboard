@@ -214,7 +214,7 @@ node bin/crewboard.js import tasks-axi path/to/backlog.md --as board-keeper --js
 
 ## Web board for people
 
-`web` serves a local dark-theme control surface over the same files used by the CLI. It refreshes while agents work. People can drag tickets between columns or reorder them within a column, open the ticket detail to edit fields and post messages, and create, organize, approve, archive, restore, and arrange projects in the workspace. It is not a second source of truth: the UI writes through the same ticket store.
+`web` serves a local dark-theme control surface over the same files used by the CLI. It refreshes while agents work. Every board surface uses bounded scroll containers, so the page does not gain horizontal overflow; long ticket and project labels truncate with their complete value available on hover. People can drag tickets between columns or reorder them within a column, open the ticket detail to edit fields and post messages, and create, organize, approve, archive, restore, and arrange projects in the workspace. It is not a second source of truth: the UI writes through the same ticket store.
 
 ## GitHub attention (captain)
 
