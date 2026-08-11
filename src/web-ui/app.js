@@ -59,7 +59,7 @@ function renderNavigation() {
 }
 
 function ticketBodyPreview(ticket) {
-  const body = String(ticket.body || '').replace(/\s+/g, ' ').trim();
+  const body = String(ticket.body || '').replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim();
   if (!body) return '';
   // Keep cards scannable: skip short import stubs; clamp everything else to one line.
   if (/^imported from\b/i.test(body) && body.length < 80) return '';
