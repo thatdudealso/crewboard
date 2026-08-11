@@ -58,12 +58,21 @@ function renderNavigation() {
   document.querySelectorAll('[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === state.view));
 }
 
+function ticketBodyPreview(ticket) {
+  const body = String(ticket.body || '').replace(/\s+/g, ' ').trim();
+  if (!body) return '';
+  // Keep cards scannable: skip short import stubs; clamp everything else to one line.
+  if (/^imported from\b/i.test(body) && body.length < 80) return '';
+  return '<div class="ticket-body" ' + titleAttr(body) + '>' + escapeHtml(body) + '</div>';
+}
+
 function ticketCard(item, ticket) {
   const assignee = ticket.assignee ? '@' + ticket.assignee : 'unassigned';
   return '<article class="ticket" draggable="true" data-ticket="' + escapeHtml(ticket.id) + '" data-project="' + escapeHtml(item.id) + '">'
     + '<div class="ticket-meta"><span class="ticket-id" ' + titleAttr(ticket.id) + '>' + escapeHtml(ticket.id) + '</span>'
     + '<span class="ticket-priority" ' + titleAttr(ticket.priority) + '>' + escapeHtml(ticket.priority) + '</span></div>'
     + '<div class="ticket-title" ' + titleAttr(ticket.title) + '>' + escapeHtml(ticket.title) + '</div>'
+    + ticketBodyPreview(ticket)
     + '<div class="ticket-footer"><span class="chip" ' + titleAttr(assignee) + '>' + escapeHtml(assignee) + '</span>'
     + '<span class="small">' + ticket.messages.length + ' msg</span></div></article>';
 }

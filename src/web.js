@@ -199,8 +199,9 @@ export async function startWebServer({ cwd = process.cwd(), workspaceFile = 'cre
     try {
       const parts = pathParts(request.url);
       if (request.method === 'GET' && await staticAsset(parts, response)) return;
-      if (request.url === '/' && request.method === 'GET') return send(response, 200, page(csrfToken));
-      if (request.url.startsWith('/api/')) return await api(request, response, resolvedWorkspace, csrfToken);
+      const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      if (pathname === '/' && request.method === 'GET') return send(response, 200, page(csrfToken));
+      if (pathname.startsWith('/api/')) return await api(request, response, resolvedWorkspace, csrfToken);
       return send(response, 404, 'Not found', 'text/plain; charset=utf-8');
     } catch (error) {
       return sendJson(response, error.statusCode || 400, { error: { message: error.message } });
