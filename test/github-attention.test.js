@@ -215,9 +215,37 @@ test('feed assembly filters to attention by default and reports honest unavailab
     ],
     'issue list thatdudealso/crewboard': [],
     'issue list thatdudealso/Pet_Diary_APP': [],
-    'mentions thatdudealso/crewboard': [],
-    'mentions thatdudealso/Pet_Diary_APP': [],
+    'mentions thatdudealso/crewboard': [
+      {
+        isPullRequest: true,
+        number: 2,
+        title: 'Quiet teammate draft',
+        url: 'https://github.com/thatdudealso/crewboard/pull/2',
+        repository: { nameWithOwner: 'thatdudealso/crewboard' },
+        assignees: [],
+        author: { login: 'teammate' },
+        body: 'cc @thatdudealso',
+      },
+    ],
+    'mentions thatdudealso/Pet_Diary_APP': [
+      {
+        isPullRequest: false,
+        number: 12,
+        title: 'Mention only issue',
+        url: 'https://github.com/thatdudealso/Pet_Diary_APP/issues/12',
+        repository: { nameWithOwner: 'thatdudealso/Pet_Diary_APP' },
+        assignees: [],
+        author: { login: 'teammate' },
+        body: 'ping @thatdudealso',
+      },
+    ],
   };
+
+  const VALID_SEARCH_ISSUE_FIELDS = new Set([
+    'assignees', 'author', 'authorAssociation', 'body', 'closedAt', 'commentsCount',
+    'createdAt', 'id', 'isLocked', 'isPullRequest', 'labels', 'number', 'repository',
+    'state', 'title', 'updatedAt', 'url',
+  ]);
 
   function runGh(args) {
     if (args[0] === 'api' && args[1] === 'user') return 'thatdudealso\n';
@@ -230,6 +258,9 @@ test('feed assembly filters to attention by default and reports honest unavailab
       return JSON.stringify(fixtures[`issue list ${repo}`] || []);
     }
     if (args[0] === 'search' && args[1] === 'issues') {
+      const requested = args[args.indexOf('--json') + 1].split(',');
+      const invalid = requested.filter((field) => !VALID_SEARCH_ISSUE_FIELDS.has(field));
+      if (invalid.length) throw new Error(`Unknown JSON field: ${invalid.join(', ')}`);
       const repo = args[args.indexOf('--repo') + 1];
       return JSON.stringify(fixtures[`mentions ${repo}`] || []);
     }
@@ -244,8 +275,14 @@ test('feed assembly filters to attention by default and reports honest unavailab
   });
   assert.equal(attention.available, true);
   assert.equal(attention.sourceFound, true);
-  assert.equal(attention.items.length, 2);
-  assert.deepEqual(attention.items.map((item) => item.number).sort(), [1, 8]);
+  assert.equal(attention.items.length, 4);
+  assert.deepEqual(attention.items.map((item) => item.number).sort((a, b) => a - b), [1, 2, 8, 12]);
+  const mentionedPr = attention.items.find((item) => item.number === 2);
+  assert.equal(mentionedPr.kind, 'pr');
+  assert.ok(mentionedPr.reasons.includes('mentioned'));
+  const mentionedIssue = attention.items.find((item) => item.number === 12);
+  assert.equal(mentionedIssue.kind, 'issue');
+  assert.deepEqual(mentionedIssue.reasons, ['mentioned']);
   assert.equal(attention.refreshedAt, '2026-08-10T12:00:00.000Z');
 
   const all = await assembleGithubAttention({
@@ -254,7 +291,7 @@ test('feed assembly filters to attention by default and reports honest unavailab
     runGh,
     clock: () => '2026-08-10T12:00:00.000Z',
   });
-  assert.equal(all.items.length, 3);
+  assert.equal(all.items.length, 4);
 
   const unavailable = await assembleGithubAttention({
     workspaceFile,

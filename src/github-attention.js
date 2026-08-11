@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { openWorkspace } from './workspace.js';
 import { now, pathExists } from './utils.js';
@@ -19,35 +19,37 @@ const PR_LIST_FIELDS = [
 
 const ISSUE_LIST_FIELDS = ['number', 'title', 'url', 'assignees', 'author', 'body'].join(',');
 
-function defaultRunGh(args, { timeout = 60_000 } = {}) {
-  const result = spawnSync('gh', args, {
-    encoding: 'utf8',
-    timeout,
-    env: process.env,
+function runChildProcess(command, args, { timeout } = {}) {
+  return new Promise((resolve) => {
+    execFile(command, args, {
+      encoding: 'utf8',
+      timeout,
+      env: process.env,
+      maxBuffer: 16 * 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      resolve({ error, stdout, stderr });
+    });
   });
-  if (result.error) {
-    const error = new Error(result.error.code === 'ENOENT'
-      ? 'GitHub CLI (gh) is not installed or not on PATH.'
-      : result.error.message);
-    error.code = 'github_unavailable';
-    throw error;
-  }
-  if (result.status !== 0) {
-    const detail = (result.stderr || result.stdout || 'gh command failed').trim();
-    const error = new Error(detail || 'gh command failed');
-    error.code = /not logged|auth|HTTP 401|HTTP 403/i.test(detail) ? 'github_unauthenticated' : 'github_unavailable';
-    throw error;
-  }
-  return result.stdout;
 }
 
-function defaultReadRemote(boardPath) {
-  const result = spawnSync('git', ['-C', boardPath, 'remote', 'get-url', 'origin'], {
-    encoding: 'utf8',
-    timeout: 10_000,
-  });
-  if (result.status !== 0) return null;
-  return (result.stdout || '').trim() || null;
+async function defaultRunGh(args, { timeout = 60_000 } = {}) {
+  const { error, stdout, stderr } = await runChildProcess('gh', args, { timeout });
+  if (!error) return stdout;
+  if (error.code === 'ENOENT') {
+    const notInstalled = new Error('GitHub CLI (gh) is not installed or not on PATH.');
+    notInstalled.code = 'github_unavailable';
+    throw notInstalled;
+  }
+  const detail = (stderr || stdout || error.message || 'gh command failed').trim();
+  const failure = new Error(detail || 'gh command failed');
+  failure.code = /not logged|auth|HTTP 401|HTTP 403/i.test(detail) ? 'github_unauthenticated' : 'github_unavailable';
+  throw failure;
+}
+
+async function defaultReadRemote(boardPath) {
+  const { error, stdout } = await runChildProcess('git', ['-C', boardPath, 'remote', 'get-url', 'origin'], { timeout: 10_000 });
+  if (error) return null;
+  return (stdout || '').trim() || null;
 }
 
 export function parseGithubRepoFromRemote(remoteUrl) {
@@ -219,7 +221,7 @@ export async function suggestReposFromProjects(projects, { readRemote = defaultR
     if (project.state && project.state !== 'active') continue;
     const boardPath = project.boardPath || project.path;
     if (!boardPath || !(await pathExists(boardPath))) continue;
-    const remote = readRemote(boardPath);
+    const remote = await readRemote(boardPath);
     const slug = parseGithubRepoFromRemote(remote);
     if (slug) suggestions.push({ repo: slug, fromProjectId: project.id, fromProjectName: project.name });
   }
@@ -266,15 +268,15 @@ function parseJsonOutput(stdout, label) {
 
 async function resolveCaptainLogin(configLogin, runGh) {
   if (configLogin) return configLogin;
-  const stdout = runGh(['api', 'user', '--jq', '.login']);
+  const stdout = await runGh(['api', 'user', '--jq', '.login']);
   return String(stdout || '').trim() || null;
 }
 
-function enrichPrMergeable(pr, repo, runGh) {
+async function enrichPrMergeable(pr, repo, runGh) {
   if (summarizeMergeable(pr.mergeable) !== 'unknown') return pr;
   try {
     const detail = parseJsonOutput(
-      runGh(['pr', 'view', String(pr.number), '-R', repo, '--json', 'mergeable,mergeStateStatus']),
+      await runGh(['pr', 'view', String(pr.number), '-R', repo, '--json', 'mergeable,mergeStateStatus']),
       `pr ${repo}#${pr.number}`,
     );
     return { ...pr, mergeable: detail.mergeable || pr.mergeable };
@@ -283,45 +285,45 @@ function enrichPrMergeable(pr, repo, runGh) {
   }
 }
 
-function fetchRepoPullRequests(repo, runGh) {
+async function fetchRepoPullRequests(repo, runGh) {
   const listed = parseJsonOutput(
-    runGh(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '50', '--json', PR_LIST_FIELDS]),
+    await runGh(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '50', '--json', PR_LIST_FIELDS]),
     `pr list ${repo}`,
   ) || [];
-  return listed.map((pr) => enrichPrMergeable({ ...pr, repo }, repo, runGh));
+  const enriched = [];
+  for (const pr of listed) {
+    enriched.push(await enrichPrMergeable({ ...pr, repo }, repo, runGh));
+  }
+  return enriched;
 }
 
-function fetchRepoIssues(repo, login, runGh) {
+async function fetchRepoIssues(repo, login, runGh) {
   if (!login) return [];
   const listed = parseJsonOutput(
-    runGh(['issue', 'list', '-R', repo, '--state', 'open', '--assignee', login, '--limit', '50', '--json', ISSUE_LIST_FIELDS]),
+    await runGh(['issue', 'list', '-R', repo, '--state', 'open', '--assignee', login, '--limit', '50', '--json', ISSUE_LIST_FIELDS]),
     `issue list ${repo}`,
   ) || [];
   return listed.map((issue) => ({ ...issue, repo }));
 }
 
-function fetchMentions(repo, login, runGh) {
+async function fetchMentions(repo, login, runGh) {
   if (!login) return [];
-  try {
-    const stdout = runGh([
-      'search',
-      'issues',
-      '--mentions',
-      login,
-      '--repo',
-      repo,
-      '--state',
-      'open',
-      '--include-prs',
-      '--limit',
-      '50',
-      '--json',
-      'kind,number,title,url,repository',
-    ]);
-    return parseJsonOutput(stdout, `mentions ${repo}`) || [];
-  } catch {
-    return [];
-  }
+  const stdout = await runGh([
+    'search',
+    'issues',
+    '--mentions',
+    login,
+    '--repo',
+    repo,
+    '--state',
+    'open',
+    '--include-prs',
+    '--limit',
+    '50',
+    '--json',
+    'isPullRequest,number,title,url,repository,assignees,author,body',
+  ]);
+  return parseJsonOutput(stdout, `mentions ${repo}`) || [];
 }
 
 function itemKey(item) {
@@ -378,21 +380,21 @@ export async function assembleGithubAttention({
   const byKey = new Map();
   try {
     for (const repo of repos) {
-      const pullRequests = fetchRepoPullRequests(repo, runGh);
+      const pullRequests = await fetchRepoPullRequests(repo, runGh);
       for (const pr of pullRequests) {
         const item = classifyAttentionItem(pr, { login, kind: 'pr' });
         byKey.set(itemKey(item), item);
       }
 
-      const issues = fetchRepoIssues(repo, login, runGh);
+      const issues = await fetchRepoIssues(repo, login, runGh);
       for (const issue of issues) {
         const item = classifyAttentionItem(issue, { login, kind: 'issue' });
         byKey.set(itemKey(item), item);
       }
 
-      const mentions = fetchMentions(repo, login, runGh);
+      const mentions = await fetchMentions(repo, login, runGh);
       for (const mention of mentions) {
-        const kind = String(mention.kind || '').toLowerCase() === 'pullrequest' ? 'pr' : 'issue';
+        const kind = mention.isPullRequest ? 'pr' : 'issue';
         const key = `${kind}:${repo}:${mention.number}`.toLowerCase();
         const existing = byKey.get(key);
         if (existing) {
