@@ -86,6 +86,8 @@ p { margin: 4px 0; color: var(--muted); }
 .row.child-1 { margin-left: 18px; }
 .row.child-2 { margin-left: 36px; }
 .row .id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.row.bucket { background: var(--surface-3); border-style: dashed; }
+.row.bucket .bucket-label { grid-column: 3 / -1; color: var(--muted); font-size: 13px; letter-spacing: .02em; }
 .tree-toggle { border: 0; background: var(--surface-3); color: var(--text); border-radius: 8px; width: 28px; height: 28px; min-height: 28px; }
 .empty, .loading { border: 1px dashed var(--line); border-radius: var(--radius); padding: 36px 24px; text-align: center; color: var(--muted); background: rgba(255,255,255,.01); }
 .loading { border-style: solid; }

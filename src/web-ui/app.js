@@ -174,8 +174,10 @@ function renderTree(item) {
     if (!byParent.has(key)) byParent.set(key, []);
     byParent.get(key).push(ticket);
   }
-  const roots = tickets.filter((ticket) => !ticket.parent || !tickets.some((candidate) => candidate.id === ticket.parent))
+  const allRoots = tickets.filter((ticket) => !ticket.parent || !tickets.some((candidate) => candidate.id === ticket.parent))
     .sort((a, b) => ({ story: 0, task: 1, subtask: 2 }[a.type] ?? 9) - ({ story: 0, task: 1, subtask: 2 }[b.type] ?? 9) || (a.position || 0) - (b.position || 0));
+  const noStoryRoots = allRoots.filter((ticket) => (ticket.type || 'task') !== 'story' && !ticket.parent);
+  const roots = allRoots.filter((ticket) => !noStoryRoots.includes(ticket));
   const lines = [];
   const walk = (ticket, depth) => {
     const key = ticket.id;
@@ -193,8 +195,18 @@ function renderTree(item) {
     </div>`);
     if (open) for (const child of children) walk(child, Math.min(depth + 1, 2));
   };
-  if (!roots.length) return `<section class="empty"><h2>No hierarchy yet</h2><p>Create a story, then nest tasks and subtasks.</p></section>`;
+  if (!roots.length && !noStoryRoots.length) return `<section class="empty"><h2>No hierarchy yet</h2><p>Create a story, then nest tasks and subtasks.</p></section>`;
   for (const root of roots) walk(root, 0);
+  if (noStoryRoots.length) {
+    const bucketKey = 'bucket:no-story';
+    const bucketOpen = state.expanded[bucketKey] !== false;
+    lines.push(`<div class="row bucket">
+      <button class="tree-toggle" data-toggle-tree="${bucketKey}" aria-expanded="${bucketOpen}">${bucketOpen ? '−' : '+'}</button>
+      <span class="id">no-story</span>
+      <span class="bucket-label">No story · ${noStoryRoots.length} unparented ticket${noStoryRoots.length === 1 ? '' : 's'}</span>
+    </div>`);
+    if (bucketOpen) for (const root of noStoryRoots) walk(root, 1);
+  }
   return `<section class="panel"><div class="breadcrumbs"><span>project · ${escapeHtml(item.name)}</span><span>structure</span></div><h2>Structure</h2><p>Expandable outline with status and progress inline.</p><div class="tree">${lines.join('')}</div></section>`;
 }
 
