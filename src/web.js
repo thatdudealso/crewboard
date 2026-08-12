@@ -84,9 +84,8 @@ async function snapshot(workspaceFile) {
   };
 }
 
-async function api(request, response, workspaceFile, csrfToken) {
+async function api(request, response, workspaceFile, csrfToken, { parts }) {
   if (request.method !== 'GET') assertCsrf(request, csrfToken);
-  const { parts } = pathParts(request.url);
   if (request.method === 'GET' && parts.join('/') === 'api/board') return sendJson(response, 200, await snapshot(workspaceFile));
   if (request.method === 'POST' && parts.join('/') === 'api/projects/discover') {
     const body = await readBody(request);
@@ -204,10 +203,11 @@ export async function startWebServer({ cwd = process.cwd(), workspaceFile = 'cre
   await ensureWorkspace(resolvedWorkspace);
   const server = http.createServer(async (request, response) => {
     try {
-      const { pathname, parts } = pathParts(request.url);
+      const route = pathParts(request.url);
+      const { pathname, parts } = route;
       if (request.method === 'GET' && await staticAsset(parts, response)) return;
       if (pathname === '/' && request.method === 'GET') return send(response, 200, page(csrfToken));
-      if (pathname.startsWith('/api/')) return await api(request, response, resolvedWorkspace, csrfToken);
+      if (pathname.startsWith('/api/')) return await api(request, response, resolvedWorkspace, csrfToken, route);
       return send(response, 404, 'Not found', 'text/plain; charset=utf-8');
     } catch (error) {
       return sendJson(response, error.statusCode || 400, { error: { message: error.message } });

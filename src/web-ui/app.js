@@ -46,7 +46,9 @@ function restoreScroll(snapshot) {
   const board = document.querySelector('.board');
   if (board) board.scrollLeft = snapshot.boardLeft;
   Object.entries(snapshot.lists || {}).forEach(([column, top]) => {
-    const node = document.querySelector('.column[data-column="' + column.replace(/"/g, '') + '"] .ticket-list');
+    const node = [...document.querySelectorAll('.column')]
+      .find((candidate) => candidate.dataset.column === column)
+      ?.querySelector('.ticket-list');
     if (node) node.scrollTop = top;
   });
   const messageBoard = document.querySelector('.message-board');
