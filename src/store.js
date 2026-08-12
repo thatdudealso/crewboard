@@ -424,6 +424,9 @@ export class BoardStore {
     const parentId = parent ? resolveTicketQuery(parent, existingTickets).id : null;
     const parentTicket = parentId ? existingTickets.find((ticket) => ticket.id === parentId) : null;
     assertParentLink({ type: ticketType, parent: parentId, parentTicket, allowUnparentedSubtask });
+    if (parentTicket?.archivedAt && !archivedAt) {
+      throw new Error(`Cannot create an active ticket under archived parent ${parentTicket.id}.`);
+    }
     const existingIds = new Set(existingTickets.flatMap((ticket) => [ticket.id, ...(ticket.aliases || [])]));
     const ticket = {
       id: generateTicketId(title, existingIds),
@@ -489,6 +492,9 @@ export class BoardStore {
           && !ticket.parent
           && ticket.source?.type === 'crewboard-transfer',
       });
+    }
+    if (parentTicket?.archivedAt && !ticket.archivedAt) {
+      throw new Error(`Cannot place active ticket ${ticket.id} under archived parent ${parentTicket.id}.`);
     }
     if (changes.type !== undefined && nextType !== (ticket.type ?? 'task')) {
       const blocking = tickets.filter((item) => item.parent === ticket.id && !item.archivedAt && PARENT_TYPE[item.type ?? 'task'] !== nextType);

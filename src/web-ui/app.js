@@ -246,12 +246,12 @@ function renderNavigation() {
 }
 
 function render() {
-  renderNavigation();
-  const selected = project();
   if (state.filters.project) {
     const forced = state.data?.projects.find((item) => item.id === state.filters.project);
     if (forced) state.projectId = forced.id;
   }
+  renderNavigation();
+  const selected = project();
   const titles = { board: 'Board', backlog: 'Backlog', tree: 'Structure', agents: 'Agents', projects: 'Projects' };
   const subtitle = {
     board: selected ? `${selected.name} · status columns` : 'Fleet overview',
