@@ -192,11 +192,21 @@ export class BoardStore {
     }
     const markdownFiles = files.filter((file) => file.endsWith('.md'));
     const existingIds = new Set(markdownFiles.map((file) => file.slice(0, -3)));
+    const migratedLegacyIds = new Set();
+    for (const file of markdownFiles) {
+      if (LEGACY_TICKET_ID.test(file.slice(0, -3))) continue;
+      const ticket = await this.readTicketFromFile(file);
+      for (const alias of ticket.aliases || []) migratedLegacyIds.add(alias);
+    }
     const legacyTickets = [];
     for (const file of markdownFiles) {
       const legacyId = file.slice(0, -3);
       if (!LEGACY_TICKET_ID.test(legacyId)) continue;
       const filePath = path.join(this.ticketsPath, file);
+      if (migratedLegacyIds.has(legacyId)) {
+        await fs.unlink(filePath);
+        continue;
+      }
       const ticket = parseTicket(await fs.readFile(filePath, 'utf8'), filePath);
       if (!LEGACY_TICKET_ID.test(ticket.id)) continue;
       const shortId = generateTicketId(ticket.title, existingIds);
@@ -677,6 +687,13 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       pending.push(...sourceTickets.filter((candidate) => candidate.parent === ticket.id));
     }
     const transferredBySourceId = new Map(recoveredBySourceId);
+    const isTransferActive = (ticket) => {
+      const transferred = transferredBySourceId.get(ticket.id);
+      return !ticket.archivedAt || (
+        ticket.transferredTo?.projectPath === destinationBoard.root
+        && ticket.transferredTo?.ticketId === transferred?.id
+      );
+    };
     const created = [];
     for (const ticket of subtree) {
       let transferred = transferredBySourceId.get(ticket.id);
@@ -725,7 +742,7 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       const restored = [];
       for (const ticket of subtree) {
         const transferred = transferredBySourceId.get(ticket.id);
-        restored.push(ticket.archivedAt ? { ticket: transferred, event: null } : await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }));
+        restored.push(isTransferActive(ticket) ? await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }) : { ticket: transferred, event: null });
       }
       return {
         ticket: restored[0].ticket,

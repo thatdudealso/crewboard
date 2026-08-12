@@ -107,6 +107,12 @@ Body
   assert.match(migrated.id, /^legacy-story-[a-f0-9]{4}$/);
   assert.ok(migrated.aliases.includes(legacyId));
   assert.equal(child.parent, migrated.id);
+
+  await fs.writeFile(path.join(ticketsPath, `${legacyId}.md`), legacyTicket(legacyId, 'Legacy story', 'story', null, 1));
+  board._migrated = false;
+  board._ready = null;
+  await board.ensureBoardReady();
+  assert.equal((await board.listTickets()).length, 2);
 });
 
 test('ticket detail exposes reporter, activity, breadcrumb, and child table progress', async () => {

@@ -345,3 +345,23 @@ test('a failed source subtree archival rolls back both boards', async () => {
   assert.equal(remaining.find((ticket) => ticket.id === task.ticket.id).parent, story.ticket.id);
   assert.equal((await destination.listTickets()).length, 0);
 });
+
+test('resuming an interrupted subtree transfer restores transferred active tickets', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Resume transfer', type: 'story' });
+  const task = await source.createTicket({ title: 'Resume child', type: 'task', parent: story.ticket.id });
+  const destinationStory = await destination.createTicket({ title: story.ticket.title, type: 'story', source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: story.ticket.id } });
+  const destinationTask = await destination.createTicket({ title: task.ticket.title, type: 'task', parent: destinationStory.ticket.id, source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: task.ticket.id } });
+  await destination.archiveTicket(destinationTask.ticket.id);
+  await destination.archiveTicket(destinationStory.ticket.id);
+  await source.archiveTicket(story.ticket.id, { transferredTo: { ticketId: destinationStory.ticket.id, projectPath: destination.root } });
+
+  await transferTicket(source, destination, story.ticket.id);
+
+  const moved = await destination.listTickets();
+  assert.equal(moved.length, 2);
+  assert.equal(moved.find((ticket) => ticket.id === destinationTask.ticket.id).parent, destinationStory.ticket.id);
+  assert.equal((await source.listTickets()).length, 0);
+});
