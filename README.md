@@ -59,7 +59,7 @@ crewboard workspace init --file fleet-workspace.json
 crewboard web --workspace fleet-workspace.json
 ```
 
-Open the URL printed by the command. The board refreshes every two seconds while agents use the CLI. Captains can drag tickets across columns or within a column, open a complete ticket and its thread, edit ticket fields, post a message, and move a ticket to another approved project. Project controls create, rename, archive, restore, organize, and rearrange projects.
+Open the URL printed by the command. The board refreshes every two seconds while agents use the CLI. Captains can drag tickets across columns or within a column, open a complete ticket and its thread, edit ticket fields, post a message, and move a ticket to another approved project. Moving a parent moves its entire subtree atomically, preserving ticket types and parent links. Project controls create, rename, archive, restore, organize, and rearrange projects.
 
 The visual board is a controller, not a second product. Ticket mutations write to the same `.crewboard/` ticket files and mergeable activity records that agents use; workspace project controls write to the selected workspace file.
 

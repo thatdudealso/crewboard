@@ -22,13 +22,13 @@ Ticket ids look like `premium-features-x4f2`. Unambiguous prefixes resolve on lo
 
 ## Screenshots
 
-- `screenshots/board-before.png` — prior board UI (cramped done column, long CB ids)
-- `screenshots/board-after.png` — hierarchy-aware board with equal columns and short ids
+- `screenshots/board-before.png`: prior board UI (cramped done column, long CB ids)
+- `screenshots/board-after.png`: hierarchy-aware board with equal columns and short ids
 
 
 ## Jira-grade screenshots
 
-- `screenshots/jira-board.png` — equal-height columns, WIP counts, progress, quick actions
-- `screenshots/jira-tree.png` — expandable structure outline
-- `screenshots/jira-filters.png` — combined filters with visible chips
-- `screenshots/jira-detail.png` — ticket detail with breadcrumb, children, activity, comments
+- `screenshots/jira-board.png`: equal-height columns, WIP counts, progress, quick actions
+- `screenshots/jira-tree.png`: expandable structure outline
+- `screenshots/jira-filters.png`: combined filters with visible chips
+- `screenshots/jira-detail.png`: ticket detail with breadcrumb, children, activity, comments
