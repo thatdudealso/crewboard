@@ -382,3 +382,26 @@ test('resuming an interrupted subtree transfer restores transferred active ticke
   assert.equal(moved.find((ticket) => ticket.id === destinationTask.ticket.id).parent, destinationStory.ticket.id);
   assert.equal((await source.listTickets()).length, 0);
 });
+
+test('a failed transfer resume restores both boards to their prior state', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Resume rollback', type: 'story' });
+  const task = await source.createTicket({ title: 'Resume rollback child', type: 'task', parent: story.ticket.id });
+  const destinationStory = await destination.createTicket({ title: story.ticket.title, type: 'story', source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: story.ticket.id } });
+  const destinationTask = await destination.createTicket({ title: task.ticket.title, type: 'task', parent: destinationStory.ticket.id, source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: task.ticket.id } });
+  await destination.archiveTicket(destinationTask.ticket.id);
+  await destination.archiveTicket(destinationStory.ticket.id);
+  await source.archiveTicket(story.ticket.id, { transferredTo: { ticketId: destinationStory.ticket.id, projectPath: destination.root } });
+  const restoreTicketUnlocked = destination.restoreTicketUnlocked.bind(destination);
+  destination.restoreTicketUnlocked = async (id, options) => {
+    if (id === destinationTask.ticket.id) throw new Error('Destination restore failed.');
+    return restoreTicketUnlocked(id, options);
+  };
+
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Destination restore failed/);
+  assert.equal((await source.listTickets()).length, 2);
+  assert.equal((await destination.listTickets()).length, 0);
+  assert.equal((await destination.listTickets({ includeArchived: true })).length, 2);
+});

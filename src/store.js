@@ -10,12 +10,22 @@ import {
   normalizeTicketType,
   PARENT_TYPE,
 } from './hierarchy.js';
-import { generateTicketId, LEGACY_TICKET_ID, resolveTicketQuery, ticketFileName } from './ids.js';
+import { generateTicketId, LEGACY_TICKET_ID, resolveTicketQuery, slugifyTitle, ticketFileName } from './ids.js';
 import { withFileLock } from './lock.js';
 import { normalizePriority } from './priority.js';
 import { DEFAULT_COLUMNS, cleanList, eventCursor, mentionsIn, now, pathExists } from './utils.js';
 
 const BOARD_DIRECTORY = '.crewboard';
+
+function migratedTicketId(title, legacyId, existingIds) {
+  const slug = slugifyTitle(title);
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const suffix = crypto.createHash('sha256').update(`${legacyId}:${attempt}`).digest('hex').slice(0, 4);
+    const id = `${slug}-${suffix}`;
+    if (!existingIds.has(id)) return id;
+  }
+  throw new Error(`Unable to migrate legacy ticket id: ${legacyId}`);
+}
 
 function frontmatter(ticket) {
   const fields = {
@@ -211,7 +221,7 @@ export class BoardStore {
       }
       const ticket = parseTicket(await fs.readFile(filePath, 'utf8'), filePath);
       if (!LEGACY_TICKET_ID.test(ticket.id)) continue;
-      const shortId = generateTicketId(ticket.title, existingIds);
+      const shortId = migratedTicketId(ticket.title, legacyId, existingIds);
       existingIds.add(shortId);
       existingIds.delete(legacyId);
       legacyTickets.push({ filePath, legacyId, shortId, ticket });
@@ -697,6 +707,9 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       );
     };
     const created = [];
+    const recoveredArchiveStates = new Map([...transferredBySourceId.entries()]
+      .filter(([sourceId]) => !created.some(({ ticket }) => ticket.id === sourceId))
+      .map(([sourceId, ticket]) => [sourceId, ticket.archivedAt]));
     try {
       for (const ticket of subtree) {
         let transferred = transferredBySourceId.get(ticket.id);
@@ -760,6 +773,12 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
           transferredTo: null,
           updatedAt: now(),
         })),
+      ...[...recoveredArchiveStates.entries()]
+        .filter(([sourceId, archivedAt]) => archivedAt && !created.some(({ ticket }) => ticket.id === sourceId))
+        .map(([sourceId, archivedAt]) => {
+          const ticket = transferredBySourceId.get(sourceId);
+          return destinationBoard.writeTicket({ ...ticket, archivedAt, updatedAt: now() });
+        }),
       ...created.map(({ result }) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(result.ticket.id))))]);
       const cleanupFailures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
       if (cleanupFailures.length) throw new AggregateError([error, ...cleanupFailures], 'Transfer failed and rollback was incomplete.');
