@@ -1,4 +1,4 @@
-const state = { data: null, view: 'board', projectId: null, notice: '' };
+const state = { data: null, view: 'board', projectId: null, notice: '', boardFingerprint: null };
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
@@ -25,9 +25,45 @@ const allMessages = () => {
     : [];
 };
 
-async function refresh() {
+function captureScroll() {
+  const board = document.querySelector('.board');
+  const lists = {};
+  document.querySelectorAll('.ticket-list').forEach((node) => {
+    const column = node.closest('[data-column]')?.dataset.column;
+    if (column) lists[column] = node.scrollTop;
+  });
+  return {
+    boardLeft: board?.scrollLeft || 0,
+    lists,
+    messageBoard: document.querySelector('.message-board')?.scrollTop || 0,
+    viewScroll: document.querySelector('.view-scroll')?.scrollTop || 0,
+    modal: document.querySelector('.modal')?.scrollTop || 0,
+  };
+}
+
+function restoreScroll(snapshot) {
+  if (!snapshot) return;
+  const board = document.querySelector('.board');
+  if (board) board.scrollLeft = snapshot.boardLeft;
+  Object.entries(snapshot.lists || {}).forEach(([column, top]) => {
+    const node = document.querySelector('.column[data-column="' + column.replace(/"/g, '') + '"] .ticket-list');
+    if (node) node.scrollTop = top;
+  });
+  const messageBoard = document.querySelector('.message-board');
+  if (messageBoard) messageBoard.scrollTop = snapshot.messageBoard;
+  const viewScroll = document.querySelector('.view-scroll');
+  if (viewScroll) viewScroll.scrollTop = snapshot.viewScroll;
+  const modal = document.querySelector('.modal');
+  if (modal) modal.scrollTop = snapshot.modal;
+}
+
+async function refresh({ force = false } = {}) {
   try {
-    state.data = await api('/api/board');
+    const data = await api('/api/board');
+    const fingerprint = JSON.stringify(data);
+    if (!force && fingerprint === state.boardFingerprint) return;
+    state.data = data;
+    state.boardFingerprint = fingerprint;
     if (!state.projectId && state.data.projects.length) state.projectId = state.data.projects[0].id;
     render();
   } catch (error) {
@@ -69,23 +105,23 @@ function ticketBodyPreview(ticket) {
 function ticketCard(item, ticket) {
   const assignee = ticket.assignee ? '@' + ticket.assignee : 'unassigned';
   return '<article class="ticket" draggable="true" data-ticket="' + escapeHtml(ticket.id) + '" data-project="' + escapeHtml(item.id) + '">'
-    + '<div class="ticket-meta"><span class="ticket-id" ' + titleAttr(ticket.id) + '>' + escapeHtml(ticket.id) + '</span>'
-    + '<span class="ticket-priority" ' + titleAttr(ticket.priority) + '>' + escapeHtml(ticket.priority) + '</span></div>'
-    + '<div class="ticket-title" ' + titleAttr(ticket.title) + '>' + escapeHtml(ticket.title) + '</div>'
-    + ticketBodyPreview(ticket)
-    + '<div class="ticket-footer"><span class="chip" ' + titleAttr(assignee) + '>' + escapeHtml(assignee) + '</span>'
-    + '<span class="small">' + ticket.messages.length + ' msg</span></div></article>';
+    + '<header class="ticket-group ticket-meta"><span class="ticket-id" ' + titleAttr(ticket.id) + '>' + escapeHtml(ticket.id) + '</span>'
+    + '<span class="ticket-priority" ' + titleAttr(ticket.priority) + '>' + escapeHtml(ticket.priority) + '</span></header>'
+    + '<div class="ticket-group ticket-main"><div class="ticket-title" ' + titleAttr(ticket.title) + '>' + escapeHtml(ticket.title) + '</div>'
+    + ticketBodyPreview(ticket) + '</div>'
+    + '<footer class="ticket-group ticket-footer"><span class="chip" ' + titleAttr(assignee) + '>' + escapeHtml(assignee) + '</span>'
+    + '<span class="small">' + ticket.messages.length + ' msg</span></footer></article>';
 }
 
 function boardForProject(item) {
   if (!item.available) return '<section class="empty">' + escapeHtml(item.error || 'This project board is unavailable.') + '</section>';
-  return '<section class="panel board-panel"><div class="topbar"><div>'
+  return '<section class="panel board-panel"><header class="topbar board-heading"><div>'
     + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
-    + '<p>' + escapeHtml(item.organization) + ' · <span class="origin">' + escapeHtml(item.origin) + '</span></p></div></div>'
+    + '<p>' + escapeHtml(item.organization) + ' · <span class="origin">' + escapeHtml(item.origin) + '</span></p></div></header>'
     + '<div class="board">' + item.columns.map((status) => {
       const tickets = item.tickets.filter((ticket) => ticket.status === status);
       return '<section class="column" data-column="' + escapeHtml(status) + '" data-project="' + escapeHtml(item.id) + '">'
-        + '<div class="column-heading"><span>' + escapeHtml(status) + '</span><span class="count">' + tickets.length + '</span></div>'
+        + '<header class="column-heading"><span>' + escapeHtml(status) + '</span><span class="count">' + tickets.length + '</span></header>'
         + '<div class="ticket-list">' + tickets.map((ticket) => ticketCard(item, ticket)).join('') + '</div></section>';
     }).join('') + '</div></section>';
 }
@@ -98,11 +134,13 @@ function renderBoard() {
 
 function renderMessages() {
   const messages = allMessages();
-  return '<section class="panel"><h2>Message board</h2><p>Threaded work context across the selected project.</p></section>'
+  return '<section class="panel message-shell"><header class="section-head"><h2>Message board</h2>'
+    + '<p>Threaded work context across the selected project.</p></header>'
     + '<div class="message-board">' + (messages.length ? messages.map((message) => {
       const meta = message.ticket.id + ' · @' + message.author + ' · ' + new Date(message.createdAt).toLocaleString();
-      return '<section class="message"><div class="small" ' + titleAttr(meta) + '>' + escapeHtml(meta) + '</div><p>' + escapeHtml(message.body) + '</p></section>';
-    }).join('') : '<section class="empty">No messages in this project yet.</section>') + '</div>';
+      return '<article class="message"><header class="message-meta small" ' + titleAttr(meta) + '>' + escapeHtml(meta) + '</header>'
+        + '<p class="message-body">' + escapeHtml(message.body) + '</p></article>';
+    }).join('') : '<section class="empty">No messages in this project yet.</section>') + '</div></section>';
 }
 
 function pendingCard(item) {
@@ -117,8 +155,8 @@ function renderProjects() {
   const pending = state.data?.pendingProjects || [];
   const archived = state.data?.archivedProjects || [];
   const active = state.data?.projects || [];
-  return '<div class="view-scroll"><section class="panel"><h2>Captain controls</h2>'
-    + '<p>Create, import, approve, organize, and archive projects. Imports never activate on their own.</p>'
+  return '<div class="view-scroll"><section class="panel"><header class="section-head"><h2>Captain controls</h2>'
+    + '<p>Create, import, approve, organize, and archive projects. Imports never activate on their own.</p></header>'
     + '<div class="panel-grid"><form id="create-project" class="project-card"><h2>Create project</h2>'
     + '<div class="form-row"><label>Name</label><input name="name" required placeholder="Project name"></div>'
     + '<div class="form-row"><label>Local board path</label><input name="boardPath" required placeholder="/path/to/project"></div>'
@@ -129,9 +167,9 @@ function renderProjects() {
     + '<div class="form-row"><label>Root or export file</label><input name="root" placeholder="~/src or /path/to/export.json"></div>'
     + '<button class="button">Scan for approval</button><p class="notice">A missing ChatGPT export reports a no-source state. Nothing is invented.</p></form></div>'
     + '<p class="notice">' + escapeHtml(state.notice || '') + '</p></section>'
-    + '<section class="panel"><h2>Pending approval</h2><div class="panel-grid">' + (pending.map(pendingCard).join('') || '<p class="empty">No candidates waiting for approval.</p>') + '</div></section>'
-    + '<section class="panel"><h2>Active projects</h2><div class="panel-grid">' + active.map((item) => (
-      '<article class="project-card"><div class="small"><span class="origin">' + escapeHtml(item.origin) + '</span> ' + escapeHtml(item.organization) + '</div>'
+    + '<section class="panel"><header class="section-head"><h2>Pending approval</h2></header><div class="panel-grid">' + (pending.map(pendingCard).join('') || '<p class="empty">No candidates waiting for approval.</p>') + '</div></section>'
+    + '<section class="panel"><header class="section-head"><h2>Active projects</h2></header><div class="panel-grid">' + active.map((item) => (
+      '<article class="project-card"><div class="project-card-meta small"><span class="origin">' + escapeHtml(item.origin) + '</span> ' + escapeHtml(item.organization) + '</div>'
       + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
       + '<p ' + titleAttr(item.boardPath || '') + '>' + escapeHtml(item.boardPath || '') + '</p>'
       + '<div class="actions"><button class="button" data-rename="' + escapeHtml(item.id) + '">Rename</button>'
@@ -140,13 +178,14 @@ function renderProjects() {
       + '<button class="button" data-arrange="' + escapeHtml('down:' + item.id) + '">↓</button>'
       + '<button class="button danger" data-archive="' + escapeHtml(item.id) + '">Archive</button></div></article>'
     )).join('') + '</div></section>'
-    + (archived.length ? '<section class="panel"><h2>Archived</h2><div class="panel-grid">' + archived.map((item) => (
+    + (archived.length ? '<section class="panel"><header class="section-head"><h2>Archived</h2></header><div class="panel-grid">' + archived.map((item) => (
       '<article class="project-card"><h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
       + '<button class="button" data-restore="' + escapeHtml(item.id) + '">Restore</button></article>'
     )).join('') + '</div></section>' : '') + '</div>';
 }
 
 function render() {
+  const scroll = captureScroll();
   renderNavigation();
   const selected = project();
   const subtitle = state.view === 'board'
@@ -158,6 +197,7 @@ function render() {
     + (selected && state.view !== 'projects' ? '<button class="button" data-open-new-ticket="true">New ticket</button>' : '')
     + '<button class="button" data-refresh="true">Refresh</button></div></div>' + content);
   bindBoard();
+  restoreScroll(scroll);
 }
 
 function bindBoard() {
@@ -216,17 +256,20 @@ function openTicket(projectId, ticketId) {
   const destinations = state.data.projects.filter((candidate) => candidate.id !== projectId).map((candidate) => '<option value="' + escapeHtml(candidate.id) + '">' + escapeHtml(candidate.name) + '</option>').join('');
   openModal('<div class="modal-head"><div><h2 ' + titleAttr(ticket.id) + '>' + escapeHtml(ticket.id) + '</h2><p>Edit the ticket through the shared store.</p></div><button class="button" data-close-modal="true">Close</button></div>'
     + '<form id="ticket-form" data-project="' + escapeHtml(projectId) + '" data-ticket="' + escapeHtml(ticketId) + '">'
-    + '<div class="form-row"><label>Title</label><input name="title" value="' + escapeHtml(ticket.title) + '"></div>'
+    + '<section class="field-group"><header class="section-head"><h3>Summary</h3></header>'
+    + '<div class="form-row"><label>Title</label><input name="title" value="' + escapeHtml(ticket.title) + '"></div></section>'
+    + '<section class="field-group"><header class="section-head"><h3>Placement</h3></header>'
     + '<div class="two-col"><div class="form-row"><label>Status</label><select name="status">' + item.columns.map((status) => '<option ' + (status === ticket.status ? 'selected' : '') + '>' + escapeHtml(status) + '</option>').join('') + '</select></div>'
     + '<div class="form-row"><label>Assignee</label><input name="assignee" value="' + escapeHtml(ticket.assignee || '') + '"></div></div>'
     + '<div class="two-col"><div class="form-row"><label>Priority</label><input name="priority" value="' + escapeHtml(ticket.priority) + '"></div>'
-    + '<div class="form-row"><label>Labels</label><input name="labels" value="' + escapeHtml(ticket.labels.join(', ')) + '"></div></div>'
+    + '<div class="form-row"><label>Labels</label><input name="labels" value="' + escapeHtml(ticket.labels.join(', ')) + '"></div></div></section>'
+    + '<section class="field-group"><header class="section-head"><h3>Context</h3></header>'
     + '<div class="form-row"><label>Links</label><input name="links" value="' + escapeHtml(ticket.links.join(', ')) + '"></div>'
-    + '<div class="form-row"><label>Context and acceptance criteria</label><textarea name="body">' + escapeHtml(ticket.body) + '</textarea></div>'
+    + '<div class="form-row"><label>Context and acceptance criteria</label><textarea name="body">' + escapeHtml(ticket.body) + '</textarea></div></section>'
     + '<div class="actions"><button class="button primary">Save ticket</button>'
     + (destinations ? '<select id="transfer-destination">' + destinations + '</select><button class="button" type="button" data-transfer="' + escapeHtml(ticketId) + '" data-project="' + escapeHtml(projectId) + '">Move to project</button>' : '')
-    + '</div></form><section class="panel"><h2>Thread</h2>'
-    + ticket.messages.map((message) => '<div class="message"><div class="small">@' + escapeHtml(message.author) + ' · ' + new Date(message.createdAt).toLocaleString() + '</div><p>' + escapeHtml(message.body) + '</p></div>').join('')
+    + '</div></form><section class="panel field-group"><header class="section-head"><h2>Thread</h2></header>'
+    + ticket.messages.map((message) => '<article class="message"><header class="message-meta small">@' + escapeHtml(message.author) + ' · ' + new Date(message.createdAt).toLocaleString() + '</header><p class="message-body">' + escapeHtml(message.body) + '</p></article>').join('')
     + '<form id="message-form" data-project="' + escapeHtml(projectId) + '" data-ticket="' + escapeHtml(ticketId) + '"><div class="form-row"><label>Captain message</label><textarea name="body" required placeholder="Write a durable handoff, decision, or question."></textarea></div><button class="button">Post message</button></form></section>');
 }
 
@@ -236,7 +279,7 @@ document.addEventListener('click', async (event) => {
   try {
     if (target.dataset.view) { state.view = target.dataset.view; render(); }
     else if (target.dataset.project) { state.projectId = target.dataset.project; state.view = 'board'; render(); }
-    else if (target.dataset.refresh) { await refresh(); }
+    else if (target.dataset.refresh) { await refresh({ force: true }); }
     else if (target.dataset.closeModal) { closeModal(); }
     else if (target.dataset.openNewTicket) {
       const item = project();
@@ -319,7 +362,7 @@ document.querySelector('#modal-backdrop').addEventListener('click', (event) => {
   if (event.target.id === 'modal-backdrop') closeModal();
 });
 
-refresh();
+refresh({ force: true });
 setInterval(() => {
   const editing = document.activeElement?.matches('input,textarea,select');
   const modalOpen = document.querySelector('#modal-backdrop').classList.contains('open');

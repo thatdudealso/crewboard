@@ -52,7 +52,8 @@ async function readBody(request) {
 }
 
 function pathParts(requestUrl) {
-  return new URL(requestUrl, 'http://127.0.0.1').pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  const { pathname } = new URL(requestUrl, 'http://127.0.0.1');
+  return { pathname, parts: pathname.split('/').filter(Boolean).map(decodeURIComponent) };
 }
 
 async function boardForProject(workspaceFile, projectId) {
@@ -85,7 +86,7 @@ async function snapshot(workspaceFile) {
 
 async function api(request, response, workspaceFile, csrfToken) {
   if (request.method !== 'GET') assertCsrf(request, csrfToken);
-  const parts = pathParts(request.url);
+  const { parts } = pathParts(request.url);
   if (request.method === 'GET' && parts.join('/') === 'api/board') return sendJson(response, 200, await snapshot(workspaceFile));
   if (request.method === 'POST' && parts.join('/') === 'api/projects/discover') {
     const body = await readBody(request);
@@ -197,9 +198,8 @@ export async function startWebServer({ cwd = process.cwd(), workspaceFile = 'cre
   await ensureWorkspace(resolvedWorkspace);
   const server = http.createServer(async (request, response) => {
     try {
-      const parts = pathParts(request.url);
+      const { pathname, parts } = pathParts(request.url);
       if (request.method === 'GET' && await staticAsset(parts, response)) return;
-      const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
       if (pathname === '/' && request.method === 'GET') return send(response, 200, page(csrfToken));
       if (pathname.startsWith('/api/')) return await api(request, response, resolvedWorkspace, csrfToken);
       return send(response, 404, 'Not found', 'text/plain; charset=utf-8');
