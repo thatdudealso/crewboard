@@ -192,6 +192,7 @@ export class BoardStore {
     }
     const markdownFiles = files.filter((file) => file.endsWith('.md'));
     const existingIds = new Set(markdownFiles.map((file) => file.slice(0, -3)));
+    const legacyTickets = [];
     for (const file of markdownFiles) {
       const legacyId = file.slice(0, -3);
       if (!LEGACY_TICKET_ID.test(legacyId)) continue;
@@ -201,17 +202,23 @@ export class BoardStore {
       const shortId = generateTicketId(ticket.title, existingIds);
       existingIds.add(shortId);
       existingIds.delete(legacyId);
+      legacyTickets.push({ filePath, legacyId, shortId, ticket });
+    }
+    const shortIdByLegacyId = new Map(legacyTickets.map(({ legacyId, shortId }) => [legacyId, shortId]));
+    for (const { filePath, legacyId, shortId, ticket } of legacyTickets) {
       const aliases = [...new Set([...(ticket.aliases || []), legacyId, ticket.id].filter((value) => value && value !== shortId))];
       const migrated = {
         ...ticket,
         id: shortId,
         aliases,
         type: ticket.type || 'task',
-        parent: ticket.parent ?? null,
+        parent: shortIdByLegacyId.get(ticket.parent) || ticket.parent || null,
         assignedBy: ticket.assignedBy ?? null,
         updatedAt: now(),
       };
       await atomicWriteFile(path.join(this.ticketsPath, ticketFileName(shortId)), serializeTicket(migrated));
+    }
+    for (const { filePath } of legacyTickets) {
       await fs.unlink(filePath);
     }
   }
@@ -706,24 +713,31 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
         transferredBySourceId.set(ticket.id, transferred);
       }
     }
-    const archived = [];
-    for (const ticket of subtree) {
-      const transferred = transferredBySourceId.get(ticket.id);
-      archived.push(ticket.archivedAt ? { ticket, event: null } : await sourceBoard.archiveTicketUnlocked(ticket.id, {
-        actor,
-        transferredTo: { projectId: destinationProjectId, ticketId: transferred.id, projectPath: destinationBoard.root },
-      }));
+    try {
+      const archived = [];
+      for (const ticket of subtree) {
+        const transferred = transferredBySourceId.get(ticket.id);
+        archived.push(ticket.archivedAt ? { ticket, event: null } : await sourceBoard.archiveTicketUnlocked(ticket.id, {
+          actor,
+          transferredTo: { projectId: destinationProjectId, ticketId: transferred.id, projectPath: destinationBoard.root },
+        }));
+      }
+      const restored = [];
+      for (const ticket of subtree) {
+        const transferred = transferredBySourceId.get(ticket.id);
+        restored.push(ticket.archivedAt ? { ticket: transferred, event: null } : await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }));
+      }
+      return {
+        ticket: restored[0].ticket,
+        sourceTicket: archived[0].ticket,
+        event: restored.find((result) => result.event)?.event || created[0]?.result.event || null,
+      };
+    } catch (error) {
+      await Promise.allSettled(subtree
+        .filter((ticket) => !ticket.archivedAt)
+        .map((ticket) => sourceBoard.writeTicket(ticket)));
+      await Promise.allSettled(created.map(({ result }) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(result.ticket.id)))));
+      throw error;
     }
-    const restored = [];
-    for (const ticket of subtree) {
-      const transferred = transferredBySourceId.get(ticket.id);
-      restored.push(ticket.archivedAt ? { ticket: transferred, event: null } : await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }));
-    }
-    const transferredRoot = transferredBySourceId.get(sourceTicket.id);
-    return {
-      ticket: restored[0].ticket,
-      sourceTicket: archived[0].ticket,
-      event: restored.find((result) => result.event)?.event || created[0]?.result.event || null,
-    };
   });
 }

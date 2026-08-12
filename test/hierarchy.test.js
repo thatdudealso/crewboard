@@ -66,18 +66,21 @@ test('legacy CB ticket files migrate to short ids while aliases remain resolvabl
   const root = await temporaryDirectory();
   const board = await BoardStore.initialize(root);
   const legacyId = 'CB-12345678901234567890';
-  const filePath = path.join(root, '.crewboard', 'tickets', `${legacyId}.md`);
-  await fs.writeFile(filePath, `---
+  const childLegacyId = 'CB-09876543210987654321';
+  const ticketsPath = path.join(root, '.crewboard', 'tickets');
+  const legacyTicket = (id, title, type, parent, position) => `---
 schemaVersion: 1
-id: "${legacyId}"
-title: "Legacy ticket"
+id: "${id}"
+title: "${title}"
+type: "${type}"
+parent: ${JSON.stringify(parent)}
 status: "inbox"
 assignee: null
 labels: []
 priority: "normal"
 links: []
 source: null
-position: 1
+position: ${position}
 archivedAt: null
 transferredTo: null
 statusHistory: []
@@ -90,16 +93,20 @@ Body
 <!-- crewboard-messages
 []
 -->
-`);
+`;
+  await fs.writeFile(path.join(ticketsPath, `${legacyId}.md`), legacyTicket(legacyId, 'Legacy story', 'story', null, 1));
+  await fs.writeFile(path.join(ticketsPath, `${childLegacyId}.md`), legacyTicket(childLegacyId, 'Legacy child', 'task', legacyId, 2));
   board._migrated = false;
   board._ready = null;
   await board.ensureBoardReady();
   const files = await fs.readdir(path.join(root, '.crewboard', 'tickets'));
-  assert.equal(files.length, 1);
-  assert.doesNotMatch(files[0], /^CB-/);
+  assert.equal(files.length, 2);
+  assert.ok(files.every((file) => !file.startsWith('CB-')));
   const migrated = await board.getTicket(legacyId);
-  assert.match(migrated.id, /^legacy-ticket-[a-f0-9]{4}$/);
+  const child = await board.getTicket(childLegacyId);
+  assert.match(migrated.id, /^legacy-story-[a-f0-9]{4}$/);
   assert.ok(migrated.aliases.includes(legacyId));
+  assert.equal(child.parent, migrated.id);
 });
 
 test('ticket detail exposes reporter, activity, breadcrumb, and child table progress', async () => {

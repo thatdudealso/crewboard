@@ -327,22 +327,21 @@ test('type changes reject parent links that would invalidate existing children',
   await assert.rejects(() => board.updateTicket(standalone.ticket.id, { type: 'subtask', parent: standalone.ticket.id }), /cannot be its own parent/);
 });
 
-test('a failed source archival leaves a recoverable inactive transfer copy', async () => {
+test('a failed source subtree archival rolls back both boards', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
   const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
-  const { ticket } = await source.createTicket({ title: 'Recover transfer' });
+  const story = await source.createTicket({ title: 'Recover transfer', type: 'story' });
+  const task = await source.createTicket({ title: 'Retain source hierarchy', type: 'task', parent: story.ticket.id });
   const archiveTicketUnlocked = source.archiveTicketUnlocked.bind(source);
-  source.archiveTicketUnlocked = async () => { throw new Error('Source write failed.'); };
+  source.archiveTicketUnlocked = async (id, options) => {
+    if (id === task.ticket.id) throw new Error('Source write failed.');
+    return archiveTicketUnlocked(id, options);
+  };
 
-  await assert.rejects(() => transferTicket(source, destination, ticket.id), /Source write failed/);
-  assert.equal((await source.listTickets()).length, 1);
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Source write failed/);
+  const remaining = await source.listTickets();
+  assert.equal(remaining.length, 2);
+  assert.equal(remaining.find((ticket) => ticket.id === task.ticket.id).parent, story.ticket.id);
   assert.equal((await destination.listTickets()).length, 0);
-  assert.equal((await destination.listTickets({ includeArchived: true })).length, 1);
-
-  source.archiveTicketUnlocked = archiveTicketUnlocked;
-  const transferred = await transferTicket(source, destination, ticket.id);
-  assert.equal((await source.listTickets()).length, 0);
-  assert.equal((await destination.listTickets()).length, 1);
-  assert.equal(transferred.ticket.title, 'Recover transfer');
 });
