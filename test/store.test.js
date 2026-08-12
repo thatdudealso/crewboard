@@ -462,6 +462,27 @@ test('a failed destination subtree staging rolls back created copies', async () 
   assert.equal((await destination.listTickets({ includeArchived: true })).length, 0);
 });
 
+test('a destination staging event failure removes its written ticket', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Event failure stage', type: 'story' });
+  await source.createTicket({ title: 'Event failure child', type: 'task', parent: story.ticket.id });
+  const appendEvent = destination.appendEvent.bind(destination);
+  let failCreateEvent = true;
+  destination.appendEvent = async (...args) => {
+    if (failCreateEvent && args[0] === 'ticket-created') {
+      failCreateEvent = false;
+      throw new Error('Destination event failed.');
+    }
+    return appendEvent(...args);
+  };
+
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Destination event failed/);
+  assert.equal((await source.listTickets()).length, 2);
+  assert.equal((await destination.listTickets({ includeArchived: true })).length, 0);
+});
+
 test('resuming an interrupted subtree transfer restores transferred active tickets', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });

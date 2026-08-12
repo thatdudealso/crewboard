@@ -743,6 +743,7 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       pending.push(...sourceTickets.filter((candidate) => candidate.parent === ticket.id));
     }
     const transferredBySourceId = new Map(recoveredBySourceId);
+    const recoveredSourceIds = new Set(recoveredBySourceId.keys());
     const isTransferActive = (ticket) => {
       const transferred = transferredBySourceId.get(ticket.id);
       return !ticket.archivedAt || (
@@ -840,6 +841,17 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
         event: restored.find((result) => result.event)?.event || created[0]?.result.event || null,
       };
     } catch (error) {
+      const sourceIds = new Set(subtree.map((ticket) => ticket.id));
+      const stagedDestinationTickets = await destinationBoard.listTicketRecordsUnlocked({ includeArchived: true });
+      const createdDestinationIds = new Set([
+        ...created.map(({ result }) => result.ticket.id),
+        ...stagedDestinationTickets
+          .filter((ticket) => ticket.source?.type === 'crewboard-transfer'
+            && ticket.source.projectPath === sourceBoard.root
+            && sourceIds.has(ticket.source.ticketId)
+            && !recoveredSourceIds.has(ticket.source.ticketId))
+          .map((ticket) => ticket.id),
+      ]);
       const results = await Promise.allSettled([...subtree
         .filter(shouldRestoreSourceOnRollback)
         .map((ticket) => sourceBoard.writeTicket({
@@ -857,7 +869,7 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       ...[...recoveredSnapshots.entries()]
         .filter(([sourceId]) => !recoveredArchiveStates.get(sourceId))
         .map(([sourceId, snapshot]) => destinationBoard.writeTicket({ ...transferredBySourceId.get(sourceId), ...snapshot, updatedAt: now() })),
-      ...created.map(({ result }) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(result.ticket.id))))]);
+      ...[...createdDestinationIds].map((id) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(id))))]);
       const cleanupFailures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
       if (cleanupFailures.length) throw new AggregateError([error, ...cleanupFailures], 'Transfer failed and rollback was incomplete.');
       const sourceEventIds = archived.map((result) => result.event?.id).filter(Boolean);
