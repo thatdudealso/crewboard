@@ -119,7 +119,7 @@ function boardForProject(item) {
   if (!item.available) return '<section class="empty">' + escapeHtml(item.error || 'This project board is unavailable.') + '</section>';
   return '<section class="panel board-panel"><header class="topbar board-heading"><div>'
     + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
-    + '<p ' + titleAttr(item.organization) + '>' + escapeHtml(item.organization) + ' · <span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span></p></div></header>'
+    + '<p class="board-context"><span class="organization-label" ' + titleAttr(item.organization) + '>' + escapeHtml(item.organization) + '</span><span class="context-separator">·</span><span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span></p></div></header>'
     + '<div class="board">' + item.columns.map((status) => {
       const tickets = item.tickets.filter((ticket) => ticket.status === status);
       return '<section class="column" data-column="' + escapeHtml(status) + '" data-project="' + escapeHtml(item.id) + '">'

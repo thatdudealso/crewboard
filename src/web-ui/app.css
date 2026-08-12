@@ -279,6 +279,29 @@ p {
 .board-panel > .topbar,
 .board-panel > .board-heading { flex: 0 0 auto; margin-bottom: var(--space-3); }
 
+.board-context {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.organization-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-separator { flex: 0 0 auto; }
+
+.board-context .origin {
+  flex: 0 1 40%;
+  min-width: 0;
+}
+
 .section-head {
   display: grid;
   gap: 2px;
