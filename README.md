@@ -144,7 +144,7 @@ Useful commands:
 | Command | What it does |
 | --- | --- |
 | `init [--name <name>] [--statuses <columns>]` | Creates a project board. |
-| `create <title> [--body <text>] [--status <column>] [--assignee <name>] [--label <label>] [--priority <value>] [--link <url-or-path>]` | Creates a ticket. Repeat `--label` and `--link` as needed. |
+| `create <title> [--body <text>] [--status <column>] [--assignee <name>] [--label <label>] [--priority <value>] [--link <url-or-path>] [--as <agent>]` | Creates a ticket. Repeat `--label` and `--link` as needed. |
 | `list [--status <column>] [--assignee <name>]` | Lists current tickets. |
 | `show <ticket-id>` | Shows one ticket and its complete thread. |
 | `move <ticket-id> <status> [--as <agent>] [--note <text>]` | Changes status and records an event. |
@@ -152,6 +152,7 @@ Useful commands:
 | `comment <ticket-id> <message> --as <agent>` | Posts a ticket message. |
 | `inbox --as <agent> [--since <cursor>]` | Reads that agent's mentions and assignments. |
 | `activity [--since <cursor>]` | Reads all events after a cursor. |
+| `import tasks-axi <backlog.md> [--as <agent>]` | Imports and synchronizes a tasks-axi Markdown backlog. |
 | `workspace init\|add\|create\|discover\|approve\|rename\|archive\|restore\|organize\|arrange\|list` | Manages the multi-project workspace. |
 | `web [--workspace <file>] [--port <port>]` | Starts the local web board. |
 | `github attention [--all] [--workspace <file>]` | Captain GitHub attention feed (PRs/issues needing review or action). |
@@ -192,7 +193,24 @@ The verified inbox response contained the posted message and an opaque cursor:
 }
 ```
 
+The JSON object above omits only the event `id`, `parents`, and `at` fields and the message `id`, `replyTo`, and `createdAt` fields from the full response. The full response includes each message's `id`, which is the value `--reply-to` expects.
+
 Agents save the returned cursor and pass it as `--since` on their next poll. This gives them incremental coordination without rereading every ticket after every run.
+
+## Import a tasks-axi backlog
+
+`import tasks-axi` bridges a Markdown backlog of checkbox task lines into board tickets:
+
+```markdown
+- [ ] homepage-build - Build the homepage (state: working) (assignee: web-agent) (priority: high)
+- [x] homepage-docs - Write the homepage docs
+```
+
+Each line's task ID before ` - ` is a stable source key. `[x]` maps to `done`; an open task maps to `inbox`, except `state: working` maps to `active` and `state: queued` maps to `ready` when those columns exist. `kind`, `assignee`, `priority`, `pr`, `link`, and `file` metadata map to labels, assignee, priority, and links. Repeating the import updates changed mapped tickets and leaves unchanged tickets alone.
+
+```sh
+node bin/crewboard.js import tasks-axi path/to/backlog.md --as board-keeper --json
+```
 
 ## Web board for people
 
@@ -232,7 +250,7 @@ If `gh` is missing, unauthenticated, or GitHub is unreachable, both CLI and web 
 
 ## Working with coding agents
 
-Crewboard ships an agent-facing workflow in [skills/crewboard/SKILL.md](skills/crewboard/SKILL.md), ticket-writing requirements in [skills/crewboard-ticket/SKILL.md](skills/crewboard-ticket/SKILL.md), and a coordinator role in [agents/crewboard-keeper.md](agents/crewboard-keeper.md). Give the two skills to a coding agent working in a Crewboard project.
+Crewboard ships an agent-facing workflow in [skills/crewboard/SKILL.md](skills/crewboard/SKILL.md), ticket-writing requirements in [skills/crewboard-ticket/SKILL.md](skills/crewboard-ticket/SKILL.md), and a coordinator role in [agents/crewboard-keeper.md](agents/crewboard-keeper.md). Give the two skills to a coding agent working in a Crewboard project. For a fleet where every agent must coordinate through Crewboard, the always-on rollout contract is [agents/crewboard-fleet-contract.md](agents/crewboard-fleet-contract.md); wire it and the ticket skill into agent instructions.
 
 The intended loop is:
 
