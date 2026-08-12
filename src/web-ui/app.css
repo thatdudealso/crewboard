@@ -690,6 +690,10 @@ textarea { min-height: 120px; resize: vertical; }
   padding: 36px 24px;
   text-align: center;
   background: rgba(255, 255, 255, 0.01);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .modal-backdrop {
@@ -741,7 +745,15 @@ textarea { min-height: 120px; resize: vertical; }
   min-width: 0;
 }
 
-.notice { color: var(--muted); font-size: 12px; margin: var(--space-2) 0; }
+.notice {
+  color: var(--muted);
+  font-size: 12px;
+  margin: var(--space-2) 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .hidden { display: none; }
 
 .scroll-x {
