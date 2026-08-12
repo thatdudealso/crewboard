@@ -70,7 +70,7 @@ export async function importTasksAxi(board, sourcePath, { actor = 'tasks-axi' } 
   const tasks = parseTasksAxi(await fs.readFile(sourcePath, 'utf8'));
   return board.withMutationLock(async () => {
     await board.refreshConfig();
-    const tickets = await board.listTickets();
+    const tickets = await board.listTickets({ includeArchived: true });
     const bySourceKey = new Map(tickets.filter((ticket) => ticket.source?.type === 'tasks-axi').map((ticket) => [ticket.source.key, ticket]));
     const result = { sourcePath, imported: [], updated: [], unchanged: [], skipped: [], normalizations: [] };
 
@@ -96,7 +96,15 @@ export async function importTasksAxi(board, sourcePath, { actor = 'tasks-axi' } 
         if (normalization) result.normalizations.push({ ...normalization, ticketId: created.ticket.id });
         continue;
       }
-      const changes = { title: task.title, status, assignee: task.assignee, labels: task.labels, priority, links: task.links };
+      const changes = {
+        title: task.title,
+        status,
+        assignee: task.assignee,
+        labels: task.labels,
+        priority,
+        links: task.links,
+        ...(existing.archivedAt ? { archivedAt: null, transferredTo: null } : {}),
+      };
       const changed = Object.entries(changes).some(([key, value]) => JSON.stringify(existing[key]) !== JSON.stringify(value));
       if (!changed) {
         result.unchanged.push(existing);

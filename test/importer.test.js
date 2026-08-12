@@ -46,6 +46,24 @@ test('imported tasks-axi tickets receive short ids and stay idempotent', async (
   assert.equal(second.unchanged[0].id, first.imported[0].id);
 });
 
+test('re-import restores an archived source-key ticket without duplicating it', async () => {
+  const root = await temporaryDirectory();
+  const source = path.join(root, 'backlog.md');
+  await fs.writeFile(source, '- [x] crewboard-build - Build the board (kind: ship)\n');
+  const board = await BoardStore.initialize(root);
+  const first = await importTasksAxi(board, source);
+  await board.archiveTicket(first.imported[0].id);
+
+  const repeated = await importTasksAxi(board, source);
+  const tickets = await board.listTickets({ includeArchived: true });
+
+  assert.equal(repeated.imported.length, 0);
+  assert.equal(repeated.updated.length, 1);
+  assert.equal(repeated.updated[0].id, first.imported[0].id);
+  assert.equal(repeated.updated[0].archivedAt, null);
+  assert.equal(tickets.filter((ticket) => ticket.source?.key === 'id:crewboard-build').length, 1);
+});
+
 test('unknown import priorities fall back to medium and report each normalization', async () => {
   const root = await temporaryDirectory();
   const source = path.join(root, 'backlog.md');
