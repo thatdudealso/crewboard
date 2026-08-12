@@ -22,7 +22,7 @@ export const usage = `crewboard - a git-native coordination board for agent flee
 
 Usage:
   crewboard init [--name <name>] [--statuses inbox,ready,active,review,done]
-  crewboard create <title> [--body <text>] [--status <column>] [--assignee <name>]
+  crewboard create <title> [--body <text>] [--status <column>] [--assignee <name>] [--label <label>] [--priority <value>] [--link <url-or-path>] [--as <agent>]
   crewboard list [--status <column>] [--assignee <name>]
   crewboard show <ticket-id>
   crewboard move <ticket-id> <status> [--as <agent>] [--note <text>]
