@@ -737,9 +737,22 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
     };
     const created = [];
     const recoveredSnapshots = new Map();
+    const sourceArchiveStates = new Map(subtree.map((ticket) => [ticket.id, {
+      archivedAt: ticket.archivedAt,
+      transferredTo: ticket.transferredTo,
+    }]));
     const recoveredArchiveStates = new Map([...transferredBySourceId.entries()]
       .filter(([sourceId]) => !created.some(({ ticket }) => ticket.id === sourceId))
       .map(([sourceId, ticket]) => [sourceId, ticket.archivedAt]));
+    const shouldRestoreSourceOnRollback = (ticket) => {
+      const sourceState = sourceArchiveStates.get(ticket.id);
+      const transferred = transferredBySourceId.get(ticket.id);
+      return !sourceState.archivedAt || (
+        sourceState.transferredTo?.projectPath === destinationBoard.root
+        && sourceState.transferredTo?.ticketId === transferred?.id
+        && recoveredArchiveStates.get(ticket.id)
+      );
+    };
     try {
       for (const ticket of subtree) {
         let transferred = transferredBySourceId.get(ticket.id);
@@ -813,7 +826,7 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       };
     } catch (error) {
       const results = await Promise.allSettled([...subtree
-        .filter(isTransferActive)
+        .filter(shouldRestoreSourceOnRollback)
         .map((ticket) => sourceBoard.writeTicket({
           ...ticket,
           archivedAt: null,
