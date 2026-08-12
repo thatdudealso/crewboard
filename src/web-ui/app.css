@@ -149,7 +149,10 @@ button { cursor: pointer; min-height: var(--tap); }
   color: var(--text);
 }
 
-.project-button .origin { flex: 0 0 auto; }
+.project-button .origin {
+  flex: 0 1 40%;
+  min-width: 0;
+}
 .project-button .nav-text {
   min-width: 0;
   overflow: hidden;
@@ -484,7 +487,11 @@ p {
 }
 
 .ticket-priority {
-  flex: 0 0 auto;
+  flex: 0 1 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--quiet);
   text-transform: lowercase;
   letter-spacing: 0.02em;
@@ -532,8 +539,8 @@ p {
 }
 
 .chip {
-  display: inline-block;
-  max-width: 72%;
+  flex: 0 1 72%;
+  min-width: 0;
   border: 0;
   border-radius: 999px;
   padding: 1px 0;
