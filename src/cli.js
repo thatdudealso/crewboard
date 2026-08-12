@@ -15,6 +15,7 @@ import {
   renameWorkspaceProject,
   updateWorkspaceProject,
 } from './workspace.js';
+import { assembleGithubAttention } from './github-attention.js';
 import { startWebServer } from './web.js';
 
 export const usage = `crewboard - a git-native coordination board for agent fleets
@@ -31,6 +32,7 @@ Usage:
   crewboard activity [--since <cursor>]
   crewboard import tasks-axi <backlog.md> [--as <agent>]
   crewboard web [--workspace <workspace.json>] [--port <port>]
+  crewboard github attention [--all] [--workspace <workspace.json>]
   crewboard workspace init [--file <workspace.json>]
   crewboard workspace add <board-path> [--file <workspace.json>]
   crewboard workspace create <name> --path <board-path> [--organization <name>]
@@ -54,7 +56,7 @@ function parseArguments(argv) {
       continue;
     }
     const key = value.slice(2);
-    if (key === 'json' || key === 'help') {
+    if (key === 'json' || key === 'help' || key === 'all') {
       options[key] = true;
       continue;
     }
@@ -115,6 +117,37 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
     if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error('Web port must be an integer from 0 to 65535.');
     const result = await startWebServer({ cwd, workspaceFile: options.workspace || 'crewboard-workspace.json', port });
     return render({ url: result.url, workspaceFile: result.workspaceFile }, { json, human: (value) => `Crewboard web is listening at ${value.url}\nWorkspace: ${value.workspaceFile}` });
+  }
+
+  if (command === 'github') {
+    const [githubCommand] = arguments_;
+    if (githubCommand !== 'attention') throw new Error('Usage: crewboard github attention [--all] [--workspace <workspace.json>].');
+    const result = await assembleGithubAttention({
+      cwd,
+      workspaceFile: options.workspace || options.file || 'crewboard-workspace.json',
+      all: Boolean(options.all),
+    });
+    return render(result, {
+      json,
+      human: (value) => {
+        if (!value.available) return `GitHub attention unavailable: ${value.error}`;
+        if (!value.items.length) {
+          return value.notice
+            || (value.mode === 'all' ? 'No open GitHub items for the configured repositories.' : 'Nothing on GitHub needs the captain right now.');
+        }
+        return value.items.map((item) => {
+          const flags = [
+            item.kind.toUpperCase(),
+            item.draft ? 'draft' : null,
+            item.reviewState !== 'none' ? `review:${item.reviewState}` : null,
+            item.mergeableState !== 'unknown' ? `merge:${item.mergeableState}` : null,
+            item.ciStatus !== 'unknown' ? `ci:${item.ciStatus}` : null,
+            item.reasons.length ? `why:${item.reasons.join(',')}` : null,
+          ].filter(Boolean).join(' · ');
+          return `${item.repo}#${item.number}  ${item.title}\n  ${flags}\n  ${item.url}`;
+        }).join('\n');
+      },
+    });
   }
 
   if (command === 'workspace') {

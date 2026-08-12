@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { startWebServer } from '../src/web.js';
@@ -14,6 +15,26 @@ async function request(url, method = 'GET', body, csrfToken) {
   assert.ok(response.ok, typeof payload === 'string' ? payload : payload.error?.message);
   return payload;
 }
+
+test('the web board exposes a lazy GitHub attention endpoint without blocking board snapshot', async () => {
+  const root = await temporaryDirectory();
+  const workspaceFile = path.join(root, 'fleet-workspace.json');
+  await fs.writeFile(workspaceFile, `${JSON.stringify({
+    schemaVersion: 2,
+    projects: [],
+    githubAttention: { repos: ['thatdudealso/crewboard'], login: 'thatdudealso' },
+  }, null, 2)}\n`);
+  const { server, url } = await startWebServer({ cwd: root, workspaceFile, port: 0 });
+  try {
+    const board = await request(`${url}/api/board`);
+    assert.ok(Array.isArray(board.projects));
+    const page = await request(`${url}/`);
+    assert.match(page, /data-view="attention"/);
+    assert.match(page, /data-refresh-attention/);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
 
 test('the local web controller creates and moves tickets through the shared workspace store', async () => {
   const root = await temporaryDirectory();

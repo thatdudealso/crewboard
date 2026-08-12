@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "createdAt": "2026-08-10T23:00:00.000Z",
+  "updatedAt": "2026-08-10T23:00:00.000Z",
+  "projects": [],
+  "githubAttention": {
+    "repos": [
+      "thatdudealso/Pet_Diary_APP",
+      "thatdudealso/crewboard"
+    ],
+    "login": "thatdudealso"
+  }
+}

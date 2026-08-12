@@ -50,6 +50,16 @@ function normalizeProject(project, index) {
   };
 }
 
+function normalizeGithubAttention(section = {}) {
+  const repos = Array.isArray(section.repos)
+    ? [...new Set(section.repos.map((value) => String(value || '').trim()).filter(Boolean))]
+    : [];
+  return {
+    repos,
+    login: section.login ? String(section.login).trim() : null,
+  };
+}
+
 function normalizeWorkspace(workspace) {
   const projects = (workspace.projects || []).map(normalizeProject);
   return {
@@ -57,6 +67,7 @@ function normalizeWorkspace(workspace) {
     createdAt: workspace.createdAt || now(),
     updatedAt: workspace.updatedAt || workspace.createdAt || now(),
     projects,
+    githubAttention: normalizeGithubAttention(workspace.githubAttention),
   };
 }
 
