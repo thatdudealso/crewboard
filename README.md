@@ -137,7 +137,7 @@ This is the real shape returned from the verified board (timestamps and IDs vary
 }
 ```
 
-The JSON object above omits only timestamp, ordering, archival, and source fields from the full response. Do not make assumptions about the generated ID or cursor contents; treat both as opaque values.
+The JSON object above omits only the ticket `body`, timestamp, ordering, archival, transfer, and source fields from the full response. Do not make assumptions about the generated ID or cursor contents; treat both as opaque values.
 
 Useful commands:
 
