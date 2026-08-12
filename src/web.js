@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BoardStore, transferTicket } from './store.js';
+import { assembleGithubAttention } from './github-attention.js';
 import {
   approveWorkspaceProject,
   arrangeWorkspaceProject,
@@ -89,6 +90,13 @@ async function snapshot(workspaceFile) {
 async function api(request, response, workspaceFile, csrfToken, { parts }) {
   if (request.method !== 'GET') assertCsrf(request, csrfToken);
   if (request.method === 'GET' && parts.join('/') === 'api/board') return sendJson(response, 200, await snapshot(workspaceFile));
+  if (request.method === 'GET' && parts.join('/') === 'api/github/attention') {
+    const query = new URL(request.url, 'http://127.0.0.1').searchParams;
+    return sendJson(response, 200, await assembleGithubAttention({
+      workspaceFile,
+      all: query.get('all') === '1' || query.get('all') === 'true',
+    }));
+  }
   if (request.method === 'POST' && parts.join('/') === 'api/projects/discover') {
     const body = await readBody(request);
     return sendJson(response, 200, await discoverProjects(workspaceFile, body));
