@@ -260,6 +260,29 @@ test('a ticket can move across projects while preserving its conversation', asyn
   assert.equal((await source.getTicket(ticket.id)).transferredTo.ticketId, transferred.ticket.id);
 });
 
+test('transferring a parent moves its hierarchy with remapped parent links', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Moving story', type: 'story' });
+  const task = await source.createTicket({ title: 'Moving task', type: 'task', parent: story.ticket.id });
+  const subtask = await source.createTicket({ title: 'Moving subtask', type: 'subtask', parent: task.ticket.id });
+
+  const transferred = await transferTicket(source, destination, story.ticket.id, { destinationProjectId: 'project-destination', actor: 'captain-web' });
+  const destinationTickets = await destination.listTickets();
+  const destinationTask = destinationTickets.find((ticket) => ticket.source.ticketId === task.ticket.id);
+  const destinationSubtask = destinationTickets.find((ticket) => ticket.source.ticketId === subtask.ticket.id);
+
+  assert.equal(destinationTickets.length, 3);
+  assert.equal(transferred.ticket.type, 'story');
+  assert.equal(destinationTask.parent, transferred.ticket.id);
+  assert.equal(destinationSubtask.parent, destinationTask.id);
+  assert.deepEqual((await source.listTickets()), []);
+  assert.equal((await source.getTicket(story.ticket.id)).transferredTo.ticketId, transferred.ticket.id);
+  assert.equal((await source.getTicket(task.ticket.id)).transferredTo.ticketId, destinationTask.id);
+  assert.equal((await source.getTicket(subtask.ticket.id)).transferredTo.ticketId, destinationSubtask.id);
+});
+
 test('transferring a subtask demotes it to a destination task and records the change', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });

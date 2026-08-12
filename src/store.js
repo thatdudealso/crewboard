@@ -649,54 +649,90 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
   if (sourceBoard.root === destinationBoard.root) throw new Error('Choose a different project when moving a ticket across projects.');
   return withBoardMutationLocks([sourceBoard, destinationBoard], async () => {
     await Promise.all([sourceBoard.refreshConfig(), destinationBoard.refreshConfig()]);
-    const sourceTicket = resolveTicketQuery(ticketId, await sourceBoard.listTicketRecordsUnlocked({ includeArchived: true }));
-    const recovered = (await destinationBoard.listTicketRecordsUnlocked({ includeArchived: true })).find((ticket) => (
-      ticket.source?.type === 'crewboard-transfer'
-      && ticket.source.projectPath === sourceBoard.root
-      && ticket.source.ticketId === sourceTicket.id
-    ));
+    const sourceTickets = await sourceBoard.listTicketRecordsUnlocked({ includeArchived: true });
+    const sourceTicket = resolveTicketQuery(ticketId, sourceTickets);
+    const destinationTickets = await destinationBoard.listTicketRecordsUnlocked({ includeArchived: true });
+    const recoveredBySourceId = new Map(destinationTickets
+      .filter((ticket) => ticket.source?.type === 'crewboard-transfer' && ticket.source.projectPath === sourceBoard.root)
+      .map((ticket) => [ticket.source.ticketId, ticket]));
+    const recovered = recoveredBySourceId.get(sourceTicket.id);
     if (sourceTicket.archivedAt && (!recovered || sourceTicket.transferredTo?.projectPath !== destinationBoard.root)) {
       throw new Error(`Ticket is already archived: ${ticketId}`);
     }
-    const transferredType = sourceTicket.type === 'subtask' ? 'task' : sourceTicket.type;
-    const created = recovered ? { ticket: recovered, event: null } : await destinationBoard.createTicketUnlocked({
-      title: sourceTicket.title,
-      body: sourceTicket.body,
-      type: transferredType,
-      parent: null,
-      status: destinationBoard.config.columns.includes(sourceTicket.status) ? sourceTicket.status : destinationBoard.config.columns[0],
-      assignee: sourceTicket.assignee,
-      assignedBy: sourceTicket.assignedBy,
-      reporter: sourceTicket.reporter,
-      labels: sourceTicket.labels,
-      priority: sourceTicket.priority,
-      links: sourceTicket.links,
-      messages: sourceTicket.messages,
-      source: {
-        type: 'crewboard-transfer',
-        projectPath: sourceBoard.root,
-        ticketId: sourceTicket.id,
-        originalType: sourceTicket.type,
-        previousSource: sourceTicket.source ?? null,
-      },
-      archivedAt: now(),
-      actor,
-    });
-    const archived = sourceTicket.archivedAt ? { ticket: sourceTicket, event: null } : await sourceBoard.archiveTicketUnlocked(sourceTicket.id, {
-      actor,
-      transferredTo: { projectId: destinationProjectId, ticketId: created.ticket.id, projectPath: destinationBoard.root },
-    });
-    const restored = await destinationBoard.restoreTicketUnlocked(created.ticket.id, { actor });
+    const subtree = [];
+    const pending = [sourceTicket];
+    const seen = new Set();
+    while (pending.length) {
+      const ticket = pending.shift();
+      if (seen.has(ticket.id)) continue;
+      seen.add(ticket.id);
+      subtree.push(ticket);
+      pending.push(...sourceTickets.filter((candidate) => candidate.parent === ticket.id));
+    }
+    const transferredBySourceId = new Map(recoveredBySourceId);
+    const created = [];
+    for (const ticket of subtree) {
+      let transferred = transferredBySourceId.get(ticket.id);
+      if (!transferred) {
+        const parent = ticket.id === sourceTicket.id
+          ? null
+          : transferredBySourceId.get(ticket.parent)?.id;
+        const type = ticket.id === sourceTicket.id && ticket.type === 'subtask' ? 'task' : ticket.type;
+        const result = await destinationBoard.createTicketUnlocked({
+          title: ticket.title,
+          body: ticket.body,
+          type,
+          parent,
+          status: destinationBoard.config.columns.includes(ticket.status) ? ticket.status : destinationBoard.config.columns[0],
+          assignee: ticket.assignee,
+          assignedBy: ticket.assignedBy,
+          reporter: ticket.reporter,
+          labels: ticket.labels,
+          priority: ticket.priority,
+          links: ticket.links,
+          messages: ticket.messages,
+          source: {
+            type: 'crewboard-transfer',
+            projectPath: sourceBoard.root,
+            ticketId: ticket.id,
+            originalType: ticket.type,
+            previousSource: ticket.source ?? null,
+          },
+          archivedAt: now(),
+          actor,
+        });
+        transferred = result.ticket;
+        created.push({ ticket, result });
+        transferredBySourceId.set(ticket.id, transferred);
+      }
+    }
+    const archived = [];
+    for (const ticket of subtree) {
+      const transferred = transferredBySourceId.get(ticket.id);
+      archived.push(ticket.archivedAt ? { ticket, event: null } : await sourceBoard.archiveTicketUnlocked(ticket.id, {
+        actor,
+        transferredTo: { projectId: destinationProjectId, ticketId: transferred.id, projectPath: destinationBoard.root },
+      }));
+    }
+    const restored = [];
+    for (const ticket of subtree) {
+      restored.push(await destinationBoard.restoreTicketUnlocked(transferredBySourceId.get(ticket.id).id, { actor }));
+    }
+    const transferredRoot = transferredBySourceId.get(sourceTicket.id);
     const alreadyRecorded = sourceTicket.type === 'subtask' && (await destinationBoard.readEvents()).some((event) => (
-      event.action === 'ticket-demoted-on-transfer' && event.ticketId === created.ticket.id
+      event.action === 'ticket-demoted-on-transfer' && event.ticketId === transferredRoot.id
     ));
     const demotionEvent = sourceTicket.type === 'subtask' && !alreadyRecorded
       ? await destinationBoard.appendEvent('ticket-demoted-on-transfer', {
-        ticketId: created.ticket.id,
+        ticketId: transferredRoot.id,
         actor,
         data: { from: 'subtask', to: 'task', sourceTicketId: sourceTicket.id },
       })
       : null;
-    return { ticket: restored.ticket, sourceTicket: archived.ticket, event: demotionEvent || restored.event || created.event };
+    return {
+      ticket: restored[0].ticket,
+      sourceTicket: archived[0].ticket,
+      event: demotionEvent || restored.find((result) => result.event)?.event || created[0]?.result.event || null,
+    };
   });
 }
