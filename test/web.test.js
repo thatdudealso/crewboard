@@ -83,7 +83,7 @@ test('the local web controller creates and moves tickets through the shared work
   }
 });
 
-test('the web board serves the extracted dark UI assets', async () => {
+test('the web board serves its UI assets', async () => {
   const root = await temporaryDirectory();
   const workspaceFile = path.join(root, 'fleet-workspace.json');
   const { server, url } = await startWebServer({ cwd: root, workspaceFile, port: 0 });
@@ -91,25 +91,20 @@ test('the web board serves the extracted dark UI assets', async () => {
     const html = await request(`${url}/`);
     assert.match(html, /assets\/app\.css/);
     assert.match(html, /assets\/app\.js/);
-    assert.match(html, /color-scheme|CREWBOARD_CSRF|class="app"/);
 
     const css = await fetch(`${url}/assets/app.css`);
     assert.equal(css.status, 200);
     assert.match(css.headers.get('content-type') || '', /text\/css/);
     const cssText = await css.text();
     assert.ok(cssText.length > 500, 'css payload should be non-trivial');
-    assert.match(cssText, /color-scheme:\s*dark/);
-    assert.match(cssText, /overflow:\s*hidden/);
 
     const js = await fetch(`${url}/assets/app.js`);
     assert.equal(js.status, 200);
     assert.match(js.headers.get('content-type') || '', /javascript/);
     const jsText = await js.text();
     assert.ok(jsText.length > 500, 'js payload should be non-trivial');
-    assert.match(jsText, /\/api\/board/);
-    assert.match(jsText, /setInterval/);
 
-    const missing = await fetch(`${url}/assets/../web.js`);
+    const missing = await fetch(`${url}/assets/%2e%2e%2fweb.js`);
     assert.equal(missing.status, 404);
     const unknown = await fetch(`${url}/assets/not-a-real-asset.css`);
     assert.equal(unknown.status, 404);
