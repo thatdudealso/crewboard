@@ -307,6 +307,17 @@ test('archiving a parent rejects active descendants', async () => {
   await assert.rejects(() => board.archiveTicket(story.ticket.id), /descendant .* is active/);
 });
 
+test('updates cannot archive a parent with active descendants', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const story = await board.createTicket({ title: 'Update archive parent', type: 'story' });
+  const task = await board.createTicket({ title: 'Active update descendant', type: 'task', parent: story.ticket.id });
+
+  await assert.rejects(() => board.updateTicket(story.ticket.id, { archivedAt: new Date().toISOString() }), /descendant .* is active/);
+  assert.equal((await board.getTicket(story.ticket.id)).archivedAt, null);
+  assert.equal((await board.getTicket(task.ticket.id)).archivedAt, null);
+});
+
 test('active tickets cannot be created or reparented beneath archived parents', async () => {
   const root = await temporaryDirectory();
   const board = await BoardStore.initialize(root);

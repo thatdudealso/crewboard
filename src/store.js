@@ -94,6 +94,18 @@ function visibleEvents(events) {
   return events.filter((event) => !reverted.has(event.id));
 }
 
+function findActiveDescendant(tickets, ticketId) {
+  const pending = [ticketId];
+  while (pending.length) {
+    const parentId = pending.shift();
+    const children = tickets.filter((candidate) => candidate.parent === parentId);
+    const activeChild = children.find((candidate) => !candidate.archivedAt);
+    if (activeChild) return activeChild;
+    pending.push(...children.map((child) => child.id));
+  }
+  return null;
+}
+
 export class BoardStore {
   static async initialize(root, { name = path.basename(root), columns = DEFAULT_COLUMNS } = {}) {
     const absoluteRoot = path.resolve(root);
@@ -504,6 +516,10 @@ export class BoardStore {
     if (parentTicket?.archivedAt && !nextArchivedAt) {
       throw new Error(`Cannot place active ticket ${ticket.id} under archived parent ${parentTicket.id}.`);
     }
+    if (!ticket.archivedAt && nextArchivedAt) {
+      const activeDescendant = findActiveDescendant(tickets, ticket.id);
+      if (activeDescendant) throw new Error(`Cannot archive ${ticket.id} while descendant ${activeDescendant.id} is active.`);
+    }
     if (changes.type !== undefined && nextType !== (ticket.type ?? 'task')) {
       const blocking = tickets.filter((item) => item.parent === ticket.id && !item.archivedAt && PARENT_TYPE[item.type ?? 'task'] !== nextType);
       if (blocking.length) {
@@ -600,15 +616,7 @@ export class BoardStore {
     const ticket = resolveTicketQuery(id, tickets);
     if (ticket.archivedAt) return { ticket, event: null, unchanged: true };
     if (!allowActiveDescendants) {
-      const pending = [ticket.id];
-      const descendants = [];
-      while (pending.length) {
-        const parent = pending.shift();
-        const children = tickets.filter((candidate) => candidate.parent === parent);
-        descendants.push(...children);
-        pending.push(...children.map((child) => child.id));
-      }
-      const activeDescendant = descendants.find((candidate) => !candidate.archivedAt);
+      const activeDescendant = findActiveDescendant(tickets, ticket.id);
       if (activeDescendant) throw new Error(`Cannot archive ${ticket.id} while descendant ${activeDescendant.id} is active.`);
     }
     ticket.archivedAt = now();
