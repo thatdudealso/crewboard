@@ -127,10 +127,11 @@ async function api(request, response, workspaceFile, csrfToken, { parts }) {
   if (request.method === 'PATCH' && parts.length === 5) {
     const body = await readBody(request);
     const changes = editableTicketChanges(body);
-    if (changes.assignee !== undefined && body.actor) changes.assignedBy = changes.assignee ? body.actor : null;
+    const actor = body.actor || 'captain-web';
+    if (changes.assignee !== undefined) changes.assignedBy = changes.assignee ? actor : null;
     return sendJson(response, 200, await board.updateTicket(ticketId, changes, {
       action: changes.assignee !== undefined ? 'ticket-assigned' : 'ticket-edited',
-      actor: body.actor || 'captain-web',
+      actor,
       eventData: changes.assignee !== undefined
         ? { assignee: changes.assignee, assignedBy: changes.assignedBy ?? null }
         : { fields: Object.keys(changes) },

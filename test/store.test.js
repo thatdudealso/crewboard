@@ -283,7 +283,22 @@ test('transferring a parent moves its hierarchy with remapped parent links', asy
   assert.equal((await source.getTicket(subtask.ticket.id)).transferredTo.ticketId, destinationSubtask.id);
 });
 
-test('transferring a subtask demotes it to a destination task and records the change', async () => {
+test('transferring a parent preserves archived descendants', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Moving story', type: 'story' });
+  const task = await source.createTicket({ title: 'Archived task', type: 'task', parent: story.ticket.id });
+  await source.archiveTicket(task.ticket.id);
+
+  await transferTicket(source, destination, story.ticket.id, { actor: 'captain-web' });
+
+  const transferredTask = (await destination.listTickets({ includeArchived: true })).find((ticket) => ticket.source.ticketId === task.ticket.id);
+  assert.ok(transferredTask.archivedAt);
+  assert.equal((await destination.listTickets()).some((ticket) => ticket.id === transferredTask.id), false);
+});
+
+test('transferring a standalone subtask preserves its type', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
   const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
@@ -293,11 +308,9 @@ test('transferring a subtask demotes it to a destination task and records the ch
 
   const transferred = await transferTicket(source, destination, subtask.ticket.id, { actor: 'captain-web' });
 
-  assert.equal(transferred.ticket.type, 'task');
+  assert.equal(transferred.ticket.type, 'subtask');
   assert.equal(transferred.ticket.parent, null);
-  assert.deepEqual((await destination.getTicketDetail(transferred.ticket.id)).activity.find((event) => event.action === 'ticket-demoted-on-transfer')?.data, {
-    from: 'subtask', to: 'task', sourceTicketId: subtask.ticket.id,
-  });
+  assert.equal((await destination.getTicketDetail(transferred.ticket.id)).activity.some((event) => event.action === 'ticket-demoted-on-transfer'), false);
 });
 
 test('type changes reject parent links that would invalidate existing children', async () => {

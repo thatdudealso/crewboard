@@ -21,7 +21,7 @@ Every ticket must make four things unambiguous:
 Every new ticket must sit in the work hierarchy: **story → task → subtask** inside a project board.
 
 - Stories are large outcomes (`--type story`).
-- Every new task must be parented to a story (`--type task --parent <story-id>`). If no suitable story exists, create one first. Unparented tasks are only valid as legacy or imported tickets; the structure view groups them under a visible "No story" bucket until they are reparented.
+- Tasks may be parented to a story (`--type task --parent <story-id>`) when they belong to a larger work stream. Parentless tasks are valid for independent work and appear in the structure view's visible "No story" bucket.
 - Subtasks belong to a task (`--type subtask --parent <task-id>`).
 
 Ticket ids are short readable slugs with a suffix, for example `premium-features-x4f2`. Use the id returned by `create`, or an unambiguous prefix, in later commands. Legacy `CB-*` ids still resolve as aliases after migration.

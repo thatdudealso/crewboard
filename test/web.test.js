@@ -68,6 +68,8 @@ test('the local web controller creates and moves tickets through the shared work
     });
     assert.equal(emptyStatus.status, 400);
     assert.match((await emptyStatus.json()).error.message, /Unknown status/);
+    const reassigned = await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, 'PATCH', { assignee: 'builder' }, csrfToken);
+    assert.equal(reassigned.ticket.assignedBy, 'captain-web');
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/messages`, 'POST', { body: 'Ready to hand off.' }, csrfToken);
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/transfer`, 'POST', {
       destinationProjectId: destination.project.id,

@@ -13,10 +13,10 @@ export function normalizeTicketType(type, { required = false } = {}) {
   return normalized;
 }
 
-export function assertParentLink({ type, parent, parentTicket }) {
+export function assertParentLink({ type, parent, parentTicket, allowUnparentedSubtask = false }) {
   const expectedParentType = PARENT_TYPE[type];
   if (!parent) {
-    if (type === 'subtask') throw new Error('A subtask requires --parent <task-id>.');
+    if (type === 'subtask' && !allowUnparentedSubtask) throw new Error('A subtask requires --parent <task-id>.');
     return;
   }
   if (!parentTicket) throw new Error(`Parent ticket not found: ${parent}`);

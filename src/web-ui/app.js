@@ -73,6 +73,13 @@ function assigneeChip(item, ticket) {
   return `<span class="chip ${leader ? 'leader' : ''}">@${escapeHtml(ticket.assignee)}${leader ? ' · leader' : ''}</span>`;
 }
 
+function hierarchyCue(item, ticket) {
+  const allTickets = item.tickets || [];
+  const parent = ticket.parent ? allTickets.find((candidate) => candidate.id === ticket.parent) : null;
+  const crossColumnChildren = allTickets.filter((candidate) => candidate.parent === ticket.id && candidate.status !== ticket.status);
+  return `${parent && parent.status !== ticket.status ? `<div class="hierarchy-cue"><span class="chip">${TYPE_ICON[parent.type] || TYPE_ICON.task} ${escapeHtml(parent.title)}</span></div>` : ''}${crossColumnChildren.length ? `<div class="hierarchy-cue"><span class="chip">${crossColumnChildren.length} child${crossColumnChildren.length === 1 ? '' : 'ren'} in other columns</span></div>` : ''}`;
+}
+
 function ticketCard(item, ticket) {
   const type = ticket.type || 'task';
   const priority = ticket.priority || 'medium';
@@ -83,6 +90,7 @@ function ticketCard(item, ticket) {
       <span class="priority-icon" title="${escapeHtml(priority)}">${PRIORITY_ICON[priority] || PRIORITY_ICON.medium}</span>
     </div>
     <div class="ticket-title">${escapeHtml(ticket.title)}</div>
+    ${hierarchyCue(item, ticket)}
     <div class="ticket-footer">
       ${assigneeChip(item, ticket)}
       <div class="quick">

@@ -73,6 +73,8 @@ p { margin: 4px 0; color: var(--muted); }
 .ticket.subtask { border-left: 3px solid #505b68; margin-left: 8px; }
 .ticket-meta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11px; font-family: var(--mono); }
 .ticket-title { margin: 8px 0; font-weight: 650; line-height: 1.3; }
+.hierarchy-cue { margin: -2px 0 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.hierarchy-cue .chip { min-height: 24px; padding: 3px 8px; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .ticket-footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
 .type-icon, .priority-icon { width: 16px; height: 16px; display: inline-grid; place-items: center; flex: 0 0 auto; }
 .progress-bar { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; width: 100%; margin-top: 8px; }

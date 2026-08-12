@@ -384,7 +384,7 @@ export class BoardStore {
     return this.withMutationLock(() => this.createTicketUnlocked({ title, body, status, assignee, labels, priority, links, source, messages, position, actor, type, parent, reporter }));
   }
 
-  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'medium', links = [], source = null, messages = [], position = null, archivedAt = null, actor = null, type, parent = null, assignedBy = null, reporter = null }) {
+  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'medium', links = [], source = null, messages = [], position = null, archivedAt = null, actor = null, type, parent = null, assignedBy = null, reporter = null, allowUnparentedSubtask = false }) {
     await this.refreshConfig();
     await ensureAgentsRegistry(this.path);
     if (!title?.trim()) throw new Error('A ticket title is required.');
@@ -394,7 +394,7 @@ export class BoardStore {
     const existingTickets = await this.listTicketRecordsUnlocked({ includeArchived: true });
     const parentId = parent ? resolveTicketQuery(parent, existingTickets).id : null;
     const parentTicket = parentId ? existingTickets.find((ticket) => ticket.id === parentId) : null;
-    assertParentLink({ type: ticketType, parent: parentId, parentTicket });
+    assertParentLink({ type: ticketType, parent: parentId, parentTicket, allowUnparentedSubtask });
     const existingIds = new Set(existingTickets.flatMap((ticket) => [ticket.id, ...(ticket.aliases || [])]));
     const ticket = {
       id: generateTicketId(title, existingIds),
@@ -677,11 +677,10 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
         const parent = ticket.id === sourceTicket.id
           ? null
           : transferredBySourceId.get(ticket.parent)?.id;
-        const type = ticket.id === sourceTicket.id && ticket.type === 'subtask' ? 'task' : ticket.type;
         const result = await destinationBoard.createTicketUnlocked({
           title: ticket.title,
           body: ticket.body,
-          type,
+          type: ticket.type,
           parent,
           status: destinationBoard.config.columns.includes(ticket.status) ? ticket.status : destinationBoard.config.columns[0],
           assignee: ticket.assignee,
@@ -698,8 +697,9 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
             originalType: ticket.type,
             previousSource: ticket.source ?? null,
           },
-          archivedAt: now(),
+          archivedAt: ticket.archivedAt || now(),
           actor,
+          allowUnparentedSubtask: ticket.id === sourceTicket.id && ticket.type === 'subtask',
         });
         transferred = result.ticket;
         created.push({ ticket, result });
@@ -716,23 +716,14 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
     }
     const restored = [];
     for (const ticket of subtree) {
-      restored.push(await destinationBoard.restoreTicketUnlocked(transferredBySourceId.get(ticket.id).id, { actor }));
+      const transferred = transferredBySourceId.get(ticket.id);
+      restored.push(ticket.archivedAt ? { ticket: transferred, event: null } : await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }));
     }
     const transferredRoot = transferredBySourceId.get(sourceTicket.id);
-    const alreadyRecorded = sourceTicket.type === 'subtask' && (await destinationBoard.readEvents()).some((event) => (
-      event.action === 'ticket-demoted-on-transfer' && event.ticketId === transferredRoot.id
-    ));
-    const demotionEvent = sourceTicket.type === 'subtask' && !alreadyRecorded
-      ? await destinationBoard.appendEvent('ticket-demoted-on-transfer', {
-        ticketId: transferredRoot.id,
-        actor,
-        data: { from: 'subtask', to: 'task', sourceTicketId: sourceTicket.id },
-      })
-      : null;
     return {
       ticket: restored[0].ticket,
       sourceTicket: archived[0].ticket,
-      event: demotionEvent || restored.find((result) => result.event)?.event || created[0]?.result.event || null,
+      event: restored.find((result) => result.event)?.event || created[0]?.result.event || null,
     };
   });
 }
