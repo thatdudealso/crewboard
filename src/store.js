@@ -479,7 +479,16 @@ export class BoardStore {
     if (nextParent === ticket.id) throw new Error('A ticket cannot be its own parent.');
     const parentTicket = nextParent ? tickets.find((item) => item.id === nextParent) : null;
     if (changes.type !== undefined || changes.parent !== undefined) {
-      assertParentLink({ type: nextType, parent: nextParent, parentTicket });
+      assertParentLink({
+        type: nextType,
+        parent: nextParent,
+        parentTicket,
+        allowUnparentedSubtask: nextType === 'subtask'
+          && !nextParent
+          && ticket.type === 'subtask'
+          && !ticket.parent
+          && ticket.source?.type === 'crewboard-transfer',
+      });
     }
     if (changes.type !== undefined && nextType !== (ticket.type ?? 'task')) {
       const blocking = tickets.filter((item) => item.parent === ticket.id && !item.archivedAt && PARENT_TYPE[item.type ?? 'task'] !== nextType);
@@ -572,9 +581,22 @@ export class BoardStore {
     return this.withMutationLock(() => this.archiveTicketUnlocked(id, { actor, transferredTo }));
   }
 
-  async archiveTicketUnlocked(id, { actor = null, transferredTo = null } = {}) {
-    const ticket = resolveTicketQuery(id, await this.listTicketRecordsUnlocked({ includeArchived: true }));
+  async archiveTicketUnlocked(id, { actor = null, transferredTo = null, allowActiveDescendants = false } = {}) {
+    const tickets = await this.listTicketRecordsUnlocked({ includeArchived: true });
+    const ticket = resolveTicketQuery(id, tickets);
     if (ticket.archivedAt) return { ticket, event: null, unchanged: true };
+    if (!allowActiveDescendants) {
+      const pending = [ticket.id];
+      const descendants = [];
+      while (pending.length) {
+        const parent = pending.shift();
+        const children = tickets.filter((candidate) => candidate.parent === parent);
+        descendants.push(...children);
+        pending.push(...children.map((child) => child.id));
+      }
+      const activeDescendant = descendants.find((candidate) => !candidate.archivedAt);
+      if (activeDescendant) throw new Error(`Cannot archive ${ticket.id} while descendant ${activeDescendant.id} is active.`);
+    }
     ticket.archivedAt = now();
     ticket.transferredTo = transferredTo;
     ticket.updatedAt = ticket.archivedAt;
@@ -752,12 +774,22 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
         archived.push(ticket.archivedAt ? { ticket, event: null } : await sourceBoard.archiveTicketUnlocked(ticket.id, {
           actor,
           transferredTo: { projectId: destinationProjectId, ticketId: transferred.id, projectPath: destinationBoard.root },
+          allowActiveDescendants: true,
         }));
+      }
+      const sourceById = new Map(subtree.map((ticket) => [ticket.id, ticket]));
+      const restoreIds = new Set();
+      for (const ticket of subtree.filter(isTransferActive)) {
+        let current = ticket;
+        while (current) {
+          restoreIds.add(current.id);
+          current = current.parent ? sourceById.get(current.parent) : null;
+        }
       }
       const restored = [];
       for (const ticket of subtree) {
         const transferred = transferredBySourceId.get(ticket.id);
-        restored.push(isTransferActive(ticket) ? await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }) : { ticket: transferred, event: null });
+        restored.push(restoreIds.has(ticket.id) ? await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }) : { ticket: transferred, event: null });
       }
       return {
         ticket: restored[0].ticket,
