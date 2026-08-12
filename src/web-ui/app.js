@@ -83,12 +83,12 @@ function renderNavigation() {
   const pending = state.data?.pendingProjects || [];
   setHtml('#project-nav', active.map((item) => (
     '<button class="project-button ' + (project()?.id === item.id ? 'active' : '') + '" data-project="' + escapeHtml(item.id) + '">'
-    + '<span class="origin">' + escapeHtml(item.origin) + '</span>'
+    + '<span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span>'
     + '<span class="nav-text" ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</span></button>'
   )).join('') || '<p class="small">No approved projects</p>');
   setHtml('#pending-nav', pending.map((item) => (
     '<button class="project-button" data-view="projects">'
-    + '<span class="origin">' + escapeHtml(item.origin) + '</span>'
+    + '<span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span>'
     + '<span class="nav-text" ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</span></button>'
   )).join('') || '<p class="small">Nothing waiting</p>');
   document.querySelectorAll('[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === state.view));
@@ -117,11 +117,11 @@ function boardForProject(item) {
   if (!item.available) return '<section class="empty">' + escapeHtml(item.error || 'This project board is unavailable.') + '</section>';
   return '<section class="panel board-panel"><header class="topbar board-heading"><div>'
     + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
-    + '<p>' + escapeHtml(item.organization) + ' · <span class="origin">' + escapeHtml(item.origin) + '</span></p></div></header>'
+    + '<p ' + titleAttr(item.organization) + '>' + escapeHtml(item.organization) + ' · <span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span></p></div></header>'
     + '<div class="board">' + item.columns.map((status) => {
       const tickets = item.tickets.filter((ticket) => ticket.status === status);
       return '<section class="column" data-column="' + escapeHtml(status) + '" data-project="' + escapeHtml(item.id) + '">'
-        + '<header class="column-heading"><span>' + escapeHtml(status) + '</span><span class="count">' + tickets.length + '</span></header>'
+        + '<header class="column-heading"><span ' + titleAttr(status) + '>' + escapeHtml(status) + '</span><span class="count">' + tickets.length + '</span></header>'
         + '<div class="ticket-list">' + tickets.map((ticket) => ticketCard(item, ticket)).join('') + '</div></section>';
     }).join('') + '</div></section>';
 }
@@ -145,7 +145,7 @@ function renderMessages() {
 
 function pendingCard(item) {
   const pathLabel = item.path || item.sourceLocation || 'No local board path supplied';
-  return '<article class="project-card"><div class="small"><span class="origin">' + escapeHtml(item.origin) + '</span> Pending approval</div>'
+  return '<article class="project-card"><div class="small"><span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span> Pending approval</div>'
     + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
     + '<p ' + titleAttr(pathLabel) + '>' + escapeHtml(pathLabel) + '</p>'
     + '<button class="button primary" data-approve="' + escapeHtml(item.id) + '">Approve project</button></article>';
@@ -169,7 +169,7 @@ function renderProjects() {
     + '<p class="notice">' + escapeHtml(state.notice || '') + '</p></section>'
     + '<section class="panel"><header class="section-head"><h2>Pending approval</h2></header><div class="panel-grid">' + (pending.map(pendingCard).join('') || '<p class="empty">No candidates waiting for approval.</p>') + '</div></section>'
     + '<section class="panel"><header class="section-head"><h2>Active projects</h2></header><div class="panel-grid">' + active.map((item) => (
-      '<article class="project-card"><div class="project-card-meta small"><span class="origin">' + escapeHtml(item.origin) + '</span> ' + escapeHtml(item.organization) + '</div>'
+      '<article class="project-card"><div class="project-card-meta small"><span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span> <span ' + titleAttr(item.organization) + '>' + escapeHtml(item.organization) + '</span></div>'
       + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
       + '<p ' + titleAttr(item.boardPath || '') + '>' + escapeHtml(item.boardPath || '') + '</p>'
       + '<div class="actions"><button class="button" data-rename="' + escapeHtml(item.id) + '">Rename</button>'
@@ -269,7 +269,10 @@ function openTicket(projectId, ticketId) {
     + '<div class="actions"><button class="button primary">Save ticket</button>'
     + (destinations ? '<select id="transfer-destination">' + destinations + '</select><button class="button" type="button" data-transfer="' + escapeHtml(ticketId) + '" data-project="' + escapeHtml(projectId) + '">Move to project</button>' : '')
     + '</div></form><section class="panel field-group"><header class="section-head"><h2>Thread</h2></header>'
-    + ticket.messages.map((message) => '<article class="message"><header class="message-meta small">@' + escapeHtml(message.author) + ' · ' + new Date(message.createdAt).toLocaleString() + '</header><p class="message-body">' + escapeHtml(message.body) + '</p></article>').join('')
+    + ticket.messages.map((message) => {
+      const meta = '@' + message.author + ' · ' + new Date(message.createdAt).toLocaleString();
+      return '<article class="message"><header class="message-meta small" ' + titleAttr(meta) + '>' + escapeHtml(meta) + '</header><p class="message-body">' + escapeHtml(message.body) + '</p></article>';
+    }).join('')
     + '<form id="message-form" data-project="' + escapeHtml(projectId) + '" data-ticket="' + escapeHtml(ticketId) + '"><div class="form-row"><label>Captain message</label><textarea name="body" required placeholder="Write a durable handoff, decision, or question."></textarea></div><button class="button">Post message</button></form></section>');
 }
 
@@ -289,7 +292,7 @@ document.addEventListener('click', async (event) => {
       const boardPath = candidate.boardPath || prompt('Local board path for ' + candidate.name + ':', '') || null;
       await api('/api/projects/' + candidate.id + '/approve', { method: 'POST', body: { boardPath } });
       state.notice = 'Approved ' + candidate.name + '.';
-      await refresh();
+      await refresh({ force: true });
     } else if (target.dataset.rename) {
       const item = state.data.projects.find((candidate) => candidate.id === target.dataset.rename);
       const name = prompt('Project name', item.name);
@@ -335,7 +338,7 @@ document.addEventListener('submit', async (event) => {
       const form = Object.fromEntries(new FormData(event.target));
       const result = await api('/api/projects/discover', { method: 'POST', body: form });
       state.notice = result.sourceFound ? 'Found ' + result.discovered.length + ' candidate(s) awaiting approval.' : 'No ' + form.source + ' source found. Nothing was imported.';
-      await refresh();
+      await refresh({ force: true });
     } else if (event.target.id === 'ticket-form') {
       event.preventDefault();
       const form = Object.fromEntries(new FormData(event.target));

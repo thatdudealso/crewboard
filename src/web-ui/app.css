@@ -89,6 +89,17 @@ button { cursor: pointer; min-height: var(--tap); }
   min-width: 0;
 }
 
+.sidebar-section {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-2);
+  margin-top: var(--space-3);
+  min-width: 0;
+  overflow: hidden;
+}
+
 .brand {
   display: flex;
   justify-content: space-between;
@@ -105,7 +116,7 @@ button { cursor: pointer; min-height: var(--tap); }
 .live { color: var(--muted); font-size: 10px; letter-spacing: 0.08em; flex: 0 0 auto; }
 
 .nav-label {
-  margin: var(--space-4) 10px var(--space-2);
+  margin: var(--space-1) var(--space-2) var(--space-2);
   color: var(--quiet);
   font-size: 10px;
   font-weight: 700;
@@ -358,7 +369,9 @@ p {
   letter-spacing: 0.08em;
   font-size: 11px;
   font-weight: 700;
-  padding: var(--space-1) var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -431,11 +444,12 @@ p {
   line-height: 1.2;
   font-family: var(--mono);
   font-weight: 500;
-  padding: 8px 10px 0;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .ticket-main {
-  padding: 4px 10px 0;
+  padding: 8px 10px 0;
 }
 
 .ticket-id {

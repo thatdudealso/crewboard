@@ -165,14 +165,20 @@ function page(csrfToken) {
 <div class="app">
   <aside class="sidebar">
     <div class="brand">Crewboard <span class="live">LIVE</span></div>
-    <div class="nav-label">Views</div>
-    <button class="nav-button active" data-view="board">Board</button>
-    <button class="nav-button" data-view="messages">Message board</button>
-    <button class="nav-button" data-view="projects">Projects</button>
-    <div class="nav-label">Active projects</div>
-    <div id="project-nav"></div>
-    <div class="nav-label">Pending approval</div>
-    <div id="pending-nav"></div>
+    <section class="sidebar-section">
+      <div class="nav-label">Views</div>
+      <button class="nav-button active" data-view="board">Board</button>
+      <button class="nav-button" data-view="messages">Message board</button>
+      <button class="nav-button" data-view="projects">Projects</button>
+    </section>
+    <section class="sidebar-section">
+      <div class="nav-label">Active projects</div>
+      <div id="project-nav"></div>
+    </section>
+    <section class="sidebar-section">
+      <div class="nav-label">Pending approval</div>
+      <div id="pending-nav"></div>
+    </section>
   </aside>
   <main class="main"><div id="app"></div></main>
 </div>
