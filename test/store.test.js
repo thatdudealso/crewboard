@@ -321,6 +321,17 @@ test('active tickets cannot be created or reparented beneath archived parents', 
   assert.ok(staged.ticket.archivedAt);
 });
 
+test('updates cannot reactivate a child beneath an archived parent', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const story = await board.createTicket({ title: 'Archived parent', type: 'story' });
+  const task = await board.createTicket({ title: 'Archived child', type: 'task', parent: story.ticket.id });
+  await board.archiveTicket(task.ticket.id);
+  await board.archiveTicket(story.ticket.id);
+
+  await assert.rejects(() => board.updateTicket(task.ticket.id, { archivedAt: null }), /archived parent/);
+});
+
 test('transfer restores archived ancestors required by active descendants', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
@@ -355,6 +366,19 @@ test('transferring a standalone subtask preserves its type', async () => {
   assert.equal((await destination.getTicketDetail(transferred.ticket.id)).activity.some((event) => event.action === 'ticket-demoted-on-transfer'), false);
   const edited = await destination.updateTicket(transferred.ticket.id, { title: 'Edited standalone transfer', type: 'subtask', parent: null });
   assert.equal(edited.ticket.title, 'Edited standalone transfer');
+});
+
+test('transferring a parent reparents an already transferred child', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Parent later', type: 'story' });
+  const task = await source.createTicket({ title: 'Child first', type: 'task', parent: story.ticket.id });
+  const movedTask = await transferTicket(source, destination, task.ticket.id);
+
+  const movedStory = await transferTicket(source, destination, story.ticket.id);
+
+  assert.equal((await destination.getTicket(movedTask.ticket.id)).parent, movedStory.ticket.id);
 });
 
 test('type changes reject parent links that would invalidate existing children', async () => {

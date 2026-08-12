@@ -479,6 +479,7 @@ export class BoardStore {
     }
     const nextType = changes.type ?? ticket.type ?? 'task';
     const nextParent = changes.parent !== undefined ? changes.parent : ticket.parent;
+    const nextArchivedAt = changes.archivedAt !== undefined ? changes.archivedAt : ticket.archivedAt;
     if (nextParent === ticket.id) throw new Error('A ticket cannot be its own parent.');
     const parentTicket = nextParent ? tickets.find((item) => item.id === nextParent) : null;
     if (changes.type !== undefined || changes.parent !== undefined) {
@@ -493,7 +494,7 @@ export class BoardStore {
           && ticket.source?.type === 'crewboard-transfer',
       });
     }
-    if (parentTicket?.archivedAt && !ticket.archivedAt) {
+    if (parentTicket?.archivedAt && !nextArchivedAt) {
       throw new Error(`Cannot place active ticket ${ticket.id} under archived parent ${parentTicket.id}.`);
     }
     if (changes.type !== undefined && nextType !== (ticket.type ?? 'task')) {
@@ -735,16 +736,24 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       );
     };
     const created = [];
+    const recoveredSnapshots = new Map();
     const recoveredArchiveStates = new Map([...transferredBySourceId.entries()]
       .filter(([sourceId]) => !created.some(({ ticket }) => ticket.id === sourceId))
       .map(([sourceId, ticket]) => [sourceId, ticket.archivedAt]));
     try {
       for (const ticket of subtree) {
         let transferred = transferredBySourceId.get(ticket.id);
-        if (!transferred) {
-          const parent = ticket.id === sourceTicket.id
-            ? null
-            : transferredBySourceId.get(ticket.parent)?.id;
+        const parent = ticket.id === sourceTicket.id
+          ? null
+          : transferredBySourceId.get(ticket.parent)?.id;
+        if (transferred) {
+          if (transferred.parent !== parent) {
+            recoveredSnapshots.set(ticket.id, { archivedAt: transferred.archivedAt, parent: transferred.parent });
+            transferred = { ...transferred, parent, updatedAt: now() };
+            await destinationBoard.writeTicket(transferred);
+            transferredBySourceId.set(ticket.id, transferred);
+          }
+        } else {
           const result = await destinationBoard.createTicketUnlocked({
             title: ticket.title,
             body: ticket.body,
@@ -815,8 +824,11 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
         .filter(([sourceId, archivedAt]) => archivedAt && !created.some(({ ticket }) => ticket.id === sourceId))
         .map(([sourceId, archivedAt]) => {
           const ticket = transferredBySourceId.get(sourceId);
-          return destinationBoard.writeTicket({ ...ticket, archivedAt, updatedAt: now() });
+          return destinationBoard.writeTicket({ ...ticket, archivedAt, parent: recoveredSnapshots.get(sourceId)?.parent ?? ticket.parent, updatedAt: now() });
         }),
+      ...[...recoveredSnapshots.entries()]
+        .filter(([sourceId]) => !recoveredArchiveStates.get(sourceId))
+        .map(([sourceId, snapshot]) => destinationBoard.writeTicket({ ...transferredBySourceId.get(sourceId), ...snapshot, updatedAt: now() })),
       ...created.map(({ result }) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(result.ticket.id))))]);
       const cleanupFailures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
       if (cleanupFailures.length) throw new AggregateError([error, ...cleanupFailures], 'Transfer failed and rollback was incomplete.');
