@@ -87,6 +87,13 @@ function parseTicket(contents, filePath) {
   };
 }
 
+function visibleEvents(events) {
+  const reverted = new Set(events
+    .filter((event) => event.action === 'transfer-rolled-back')
+    .flatMap((event) => event.data?.revertedEventIds || []));
+  return events.filter((event) => !reverted.has(event.id));
+}
+
 export class BoardStore {
   static async initialize(root, { name = path.basename(root), columns = DEFAULT_COLUMNS } = {}) {
     const absoluteRoot = path.resolve(root);
@@ -292,7 +299,7 @@ export class BoardStore {
   async getTicketDetail(id) {
     const tickets = await this.listTicketRecords({ includeArchived: true });
     const ticket = decorateTicket(resolveTicketQuery(id, tickets), tickets, this.config.columns);
-    const events = (await this.readEvents()).filter((event) => event.ticketId === ticket.id || (ticket.aliases || []).includes(event.ticketId));
+    const events = visibleEvents(await this.readEvents()).filter((event) => event.ticketId === ticket.id || (ticket.aliases || []).includes(event.ticketId));
     const activity = events
       .filter((event) => event.action !== 'message-posted')
       .map((event) => ({
@@ -672,16 +679,16 @@ export class BoardStore {
       processed.add(id);
       pending.push(...(eventById.get(id)?.parents || []));
     }
-    const events = checkpoint.eventIds.size
+    const events = (checkpoint.eventIds.size
       ? allEvents.filter((event) => !processed.has(event.id))
-      : allEvents.filter((event) => event.cursor > checkpoint.legacyCursor);
+      : allEvents.filter((event) => event.cursor > checkpoint.legacyCursor));
     const parentIds = new Set(allEvents.flatMap((event) => event.parents || []));
     const heads = allEvents
       .filter((event) => !parentIds.has(event.id))
       .map((event) => event.id)
       .sort();
     const cursor = `v1.${Buffer.from(JSON.stringify(heads)).toString('base64url')}`;
-    return { events, cursor };
+    return { events: visibleEvents(events), cursor };
   }
 
   async inbox(agent, since = 0) {
@@ -736,6 +743,8 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       );
     };
     const created = [];
+    const archived = [];
+    const restored = [];
     const recoveredSnapshots = new Map();
     const sourceArchiveStates = new Map(subtree.map((ticket) => [ticket.id, {
       archivedAt: ticket.archivedAt,
@@ -796,7 +805,6 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
           transferredBySourceId.set(ticket.id, transferred);
         }
       }
-      const archived = [];
       for (const ticket of subtree) {
         const transferred = transferredBySourceId.get(ticket.id);
         archived.push(ticket.archivedAt ? { ticket, event: null } : await sourceBoard.archiveTicketUnlocked(ticket.id, {
@@ -814,7 +822,6 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
           current = current.parent ? sourceById.get(current.parent) : null;
         }
       }
-      const restored = [];
       for (const ticket of subtree) {
         const transferred = transferredBySourceId.get(ticket.id);
         restored.push(restoreIds.has(ticket.id) ? await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }) : { ticket: transferred, event: null });
@@ -845,6 +852,25 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       ...created.map(({ result }) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(result.ticket.id))))]);
       const cleanupFailures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
       if (cleanupFailures.length) throw new AggregateError([error, ...cleanupFailures], 'Transfer failed and rollback was incomplete.');
+      const sourceEventIds = archived.map((result) => result.event?.id).filter(Boolean);
+      const destinationEventIds = [
+        ...created.map(({ result }) => result.event?.id),
+        ...restored.map((result) => result.event?.id),
+      ].filter(Boolean);
+      const compensation = await Promise.allSettled([
+        ...(sourceEventIds.length ? [sourceBoard.appendEvent('transfer-rolled-back', {
+          ticketId: sourceTicket.id,
+          actor,
+          data: { revertedEventIds: sourceEventIds },
+        })] : []),
+        ...(destinationEventIds.length ? [destinationBoard.appendEvent('transfer-rolled-back', {
+          ticketId: sourceTicket.id,
+          actor,
+          data: { revertedEventIds: destinationEventIds },
+        })] : []),
+      ]);
+      const compensationFailures = compensation.filter((result) => result.status === 'rejected').map((result) => result.reason);
+      if (compensationFailures.length) throw new AggregateError([error, ...compensationFailures], 'Transfer failed and rollback activity could not be recorded.');
       throw error;
     }
   });

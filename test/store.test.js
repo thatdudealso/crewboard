@@ -412,6 +412,8 @@ test('a failed source subtree archival rolls back both boards', async () => {
   assert.equal(remaining.length, 2);
   assert.equal(remaining.find((ticket) => ticket.id === task.ticket.id).parent, story.ticket.id);
   assert.equal((await destination.listTickets()).length, 0);
+  assert.deepEqual((await source.activity(0)).events.map((event) => event.action), ['ticket-created', 'ticket-created', 'transfer-rolled-back']);
+  assert.deepEqual((await destination.activity(0)).events.map((event) => event.action), ['transfer-rolled-back']);
 });
 
 test('a failed parent transfer does not reactivate an earlier child transfer', async () => {
