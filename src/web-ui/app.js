@@ -147,7 +147,7 @@ function renderMessages() {
 
 function pendingCard(item) {
   const pathLabel = item.path || item.sourceLocation || 'No local board path supplied';
-  return '<article class="project-card"><div class="small"><span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span> Pending approval</div>'
+  return '<article class="project-card"><div class="project-card-meta small"><span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span><span class="project-card-state">Pending approval</span></div>'
     + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
     + '<p ' + titleAttr(pathLabel) + '>' + escapeHtml(pathLabel) + '</p>'
     + '<button class="button primary" data-approve="' + escapeHtml(item.id) + '">Approve project</button></article>';
@@ -171,7 +171,7 @@ function renderProjects() {
     + '<p class="notice">' + escapeHtml(state.notice || '') + '</p></section>'
     + '<section class="panel"><header class="section-head"><h2>Pending approval</h2></header><div class="panel-grid">' + (pending.map(pendingCard).join('') || '<p class="empty">No candidates waiting for approval.</p>') + '</div></section>'
     + '<section class="panel"><header class="section-head"><h2>Active projects</h2></header><div class="panel-grid">' + active.map((item) => (
-      '<article class="project-card"><div class="project-card-meta small"><span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span> <span ' + titleAttr(item.organization) + '>' + escapeHtml(item.organization) + '</span></div>'
+      '<article class="project-card"><div class="project-card-meta small"><span class="origin" ' + titleAttr(item.origin) + '>' + escapeHtml(item.origin) + '</span><span class="project-card-organization" ' + titleAttr(item.organization) + '>' + escapeHtml(item.organization) + '</span></div>'
       + '<h2 ' + titleAttr(item.name) + '>' + escapeHtml(item.name) + '</h2>'
       + '<p ' + titleAttr(item.boardPath || '') + '>' + escapeHtml(item.boardPath || '') + '</p>'
       + '<div class="actions"><button class="button" data-rename="' + escapeHtml(item.id) + '">Rename</button>'
