@@ -65,7 +65,7 @@ async function boardForProject(workspaceFile, projectId) {
 
 function editableTicketChanges(body) {
   const changes = {};
-  for (const key of ['title', 'body', 'status', 'assignee', 'priority', 'type', 'parent', 'reporter', 'assignedBy']) {
+  for (const key of ['title', 'body', 'status', 'assignee', 'priority', 'type', 'parent', 'reporter']) {
     if (body[key] !== undefined) changes[key] = body[key];
   }
   if (body.labels !== undefined) changes.labels = Array.isArray(body.labels) ? body.labels : String(body.labels).split(',');

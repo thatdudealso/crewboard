@@ -108,11 +108,14 @@ Body
   assert.ok(migrated.aliases.includes(legacyId));
   assert.equal(child.parent, migrated.id);
 
-  await fs.writeFile(path.join(ticketsPath, `${legacyId}.md`), legacyTicket(legacyId, 'Legacy story', 'story', null, 1));
+  await fs.unlink(path.join(ticketsPath, `${child.id}.md`));
+  await fs.writeFile(path.join(ticketsPath, `${childLegacyId}.md`), legacyTicket(childLegacyId, 'Legacy child', 'task', legacyId, 2));
   board._migrated = false;
   board._ready = null;
   await board.ensureBoardReady();
+  const resumedChild = await board.getTicket(childLegacyId);
   assert.equal((await board.listTickets()).length, 2);
+  assert.equal(resumedChild.parent, migrated.id);
 });
 
 test('ticket detail exposes reporter, activity, breadcrumb, and child table progress', async () => {

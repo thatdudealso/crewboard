@@ -346,6 +346,23 @@ test('a failed source subtree archival rolls back both boards', async () => {
   assert.equal((await destination.listTickets()).length, 0);
 });
 
+test('a failed destination subtree staging rolls back created copies', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Stage transfer', type: 'story' });
+  const task = await source.createTicket({ title: 'Stage child', type: 'task', parent: story.ticket.id });
+  const createTicketUnlocked = destination.createTicketUnlocked.bind(destination);
+  destination.createTicketUnlocked = async (changes) => {
+    if (changes.title === task.ticket.title) throw new Error('Destination write failed.');
+    return createTicketUnlocked(changes);
+  };
+
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Destination write failed/);
+  assert.equal((await source.listTickets()).length, 2);
+  assert.equal((await destination.listTickets({ includeArchived: true })).length, 0);
+});
+
 test('resuming an interrupted subtree transfer restores transferred active tickets', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });

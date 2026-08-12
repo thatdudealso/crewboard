@@ -73,6 +73,8 @@ test('the local web controller creates and moves tickets through the shared work
     const edited = await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, 'PATCH', { title: 'Moved through the web board', assignee: 'builder' }, csrfToken);
     assert.equal(edited.ticket.assignedBy, 'captain-web');
     assert.equal(edited.event.action, 'ticket-edited');
+    const spoofed = await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, 'PATCH', { assignedBy: 'impostor' }, csrfToken);
+    assert.equal(spoofed.ticket.assignedBy, 'captain-web');
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/messages`, 'POST', { body: 'Ready to hand off.' }, csrfToken);
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/transfer`, 'POST', {
       destinationProjectId: destination.project.id,

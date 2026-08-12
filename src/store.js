@@ -192,18 +192,20 @@ export class BoardStore {
     }
     const markdownFiles = files.filter((file) => file.endsWith('.md'));
     const existingIds = new Set(markdownFiles.map((file) => file.slice(0, -3)));
-    const migratedLegacyIds = new Set();
+    const shortIdByLegacyId = new Map();
     for (const file of markdownFiles) {
       if (LEGACY_TICKET_ID.test(file.slice(0, -3))) continue;
       const ticket = await this.readTicketFromFile(file);
-      for (const alias of ticket.aliases || []) migratedLegacyIds.add(alias);
+      for (const alias of ticket.aliases || []) {
+        if (LEGACY_TICKET_ID.test(alias)) shortIdByLegacyId.set(alias, ticket.id);
+      }
     }
     const legacyTickets = [];
     for (const file of markdownFiles) {
       const legacyId = file.slice(0, -3);
       if (!LEGACY_TICKET_ID.test(legacyId)) continue;
       const filePath = path.join(this.ticketsPath, file);
-      if (migratedLegacyIds.has(legacyId)) {
+      if (shortIdByLegacyId.has(legacyId)) {
         await fs.unlink(filePath);
         continue;
       }
@@ -213,8 +215,8 @@ export class BoardStore {
       existingIds.add(shortId);
       existingIds.delete(legacyId);
       legacyTickets.push({ filePath, legacyId, shortId, ticket });
+      shortIdByLegacyId.set(legacyId, shortId);
     }
-    const shortIdByLegacyId = new Map(legacyTickets.map(({ legacyId, shortId }) => [legacyId, shortId]));
     for (const { filePath, legacyId, shortId, ticket } of legacyTickets) {
       const aliases = [...new Set([...(ticket.aliases || []), legacyId, ticket.id].filter((value) => value && value !== shortId))];
       const migrated = {
@@ -695,42 +697,42 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
       );
     };
     const created = [];
-    for (const ticket of subtree) {
-      let transferred = transferredBySourceId.get(ticket.id);
-      if (!transferred) {
-        const parent = ticket.id === sourceTicket.id
-          ? null
-          : transferredBySourceId.get(ticket.parent)?.id;
-        const result = await destinationBoard.createTicketUnlocked({
-          title: ticket.title,
-          body: ticket.body,
-          type: ticket.type,
-          parent,
-          status: destinationBoard.config.columns.includes(ticket.status) ? ticket.status : destinationBoard.config.columns[0],
-          assignee: ticket.assignee,
-          assignedBy: ticket.assignedBy,
-          reporter: ticket.reporter,
-          labels: ticket.labels,
-          priority: ticket.priority,
-          links: ticket.links,
-          messages: ticket.messages,
-          source: {
-            type: 'crewboard-transfer',
-            projectPath: sourceBoard.root,
-            ticketId: ticket.id,
-            originalType: ticket.type,
-            previousSource: ticket.source ?? null,
-          },
-          archivedAt: ticket.archivedAt || now(),
-          actor,
-          allowUnparentedSubtask: ticket.id === sourceTicket.id && ticket.type === 'subtask',
-        });
-        transferred = result.ticket;
-        created.push({ ticket, result });
-        transferredBySourceId.set(ticket.id, transferred);
-      }
-    }
     try {
+      for (const ticket of subtree) {
+        let transferred = transferredBySourceId.get(ticket.id);
+        if (!transferred) {
+          const parent = ticket.id === sourceTicket.id
+            ? null
+            : transferredBySourceId.get(ticket.parent)?.id;
+          const result = await destinationBoard.createTicketUnlocked({
+            title: ticket.title,
+            body: ticket.body,
+            type: ticket.type,
+            parent,
+            status: destinationBoard.config.columns.includes(ticket.status) ? ticket.status : destinationBoard.config.columns[0],
+            assignee: ticket.assignee,
+            assignedBy: ticket.assignedBy,
+            reporter: ticket.reporter,
+            labels: ticket.labels,
+            priority: ticket.priority,
+            links: ticket.links,
+            messages: ticket.messages,
+            source: {
+              type: 'crewboard-transfer',
+              projectPath: sourceBoard.root,
+              ticketId: ticket.id,
+              originalType: ticket.type,
+              previousSource: ticket.source ?? null,
+            },
+            archivedAt: ticket.archivedAt || now(),
+            actor,
+            allowUnparentedSubtask: ticket.id === sourceTicket.id && ticket.type === 'subtask',
+          });
+          transferred = result.ticket;
+          created.push({ ticket, result });
+          transferredBySourceId.set(ticket.id, transferred);
+        }
+      }
       const archived = [];
       for (const ticket of subtree) {
         const transferred = transferredBySourceId.get(ticket.id);
@@ -750,10 +752,17 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
         event: restored.find((result) => result.event)?.event || created[0]?.result.event || null,
       };
     } catch (error) {
-      await Promise.allSettled(subtree
-        .filter((ticket) => !ticket.archivedAt)
-        .map((ticket) => sourceBoard.writeTicket(ticket)));
-      await Promise.allSettled(created.map(({ result }) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(result.ticket.id)))));
+      const results = await Promise.allSettled([...subtree
+        .filter(isTransferActive)
+        .map((ticket) => sourceBoard.writeTicket({
+          ...ticket,
+          archivedAt: null,
+          transferredTo: null,
+          updatedAt: now(),
+        })),
+      ...created.map(({ result }) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(result.ticket.id))))]);
+      const cleanupFailures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
+      if (cleanupFailures.length) throw new AggregateError([error, ...cleanupFailures], 'Transfer failed and rollback was incomplete.');
       throw error;
     }
   });
