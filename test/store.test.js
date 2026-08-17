@@ -19,7 +19,7 @@ test('a board persists git-friendly markdown tickets and append-only events', as
     actor: 'captain',
   });
 
-  assert.match(ticket.id, /^CB-\d{20,}$/);
+  assert.match(ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
   assert.deepEqual(ticket.labels, ['release', 'agent']);
   assert.equal(event.cursor, 1);
   const persisted = await fs.readFile(path.join(root, '.crewboard', 'tickets', `${ticket.id}.md`), 'utf8');
@@ -71,7 +71,7 @@ test('open board handles refresh their cursors before recording later mutations'
   await secondHandle.addComment(first.ticket.id, { author: 'worker', body: 'A durable update.' });
   const second = await firstHandle.createTicket({ title: 'Second task' });
 
-  assert.match(second.ticket.id, /^CB-\d{20,}$/);
+  assert.match(second.ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
   assert.deepEqual((await firstHandle.activity(0)).events.map((event) => event.cursor), [1, 2, 3]);
 });
 
@@ -82,7 +82,7 @@ test('simultaneous agents receive unique ticket IDs and activity cursors', async
   const created = await Promise.all(handles.map((board, index) => board.createTicket({ title: `Concurrent task ${index + 1}` })));
 
   assert.equal(new Set(created.map((result) => result.ticket.id)).size, 5);
-  assert.ok(created.every((result) => /^CB-\d{20,}$/.test(result.ticket.id)));
+  assert.ok(created.every((result) => /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/.test(result.ticket.id)));
   const board = await BoardStore.open(root);
   assert.deepEqual((await board.activity()).events.map((event) => event.cursor), [1, 2, 3, 4, 5]);
 });
@@ -122,7 +122,7 @@ test('a board recovers a mutation lock left by a stopped process', async () => {
 
   const { ticket } = await board.createTicket({ title: 'Recover mutations' });
 
-  assert.match(ticket.id, /^CB-\d{20,}$/);
+  assert.match(ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
 });
 
 test('a board recovers an orphaned stale-lock recovery sentinel', async () => {
@@ -134,7 +134,7 @@ test('a board recovers an orphaned stale-lock recovery sentinel', async () => {
 
   const { ticket } = await board.createTicket({ title: 'Recover handoff' });
 
-  assert.match(ticket.id, /^CB-\d{20,}$/);
+  assert.match(ticket.id, /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{4}$/);
 });
 
 test('activity ignores an unfinished trailing event record', async () => {
@@ -260,22 +260,268 @@ test('a ticket can move across projects while preserving its conversation', asyn
   assert.equal((await source.getTicket(ticket.id)).transferredTo.ticketId, transferred.ticket.id);
 });
 
-test('a failed source archival leaves a recoverable inactive transfer copy', async () => {
+test('transferring a parent moves its hierarchy with remapped parent links', async () => {
   const root = await temporaryDirectory();
   const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
   const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
-  const { ticket } = await source.createTicket({ title: 'Recover transfer' });
+  const story = await source.createTicket({ title: 'Moving story', type: 'story' });
+  const task = await source.createTicket({ title: 'Moving task', type: 'task', parent: story.ticket.id });
+  const subtask = await source.createTicket({ title: 'Moving subtask', type: 'subtask', parent: task.ticket.id });
+
+  const transferred = await transferTicket(source, destination, story.ticket.id, { destinationProjectId: 'project-destination', actor: 'captain-web' });
+  const destinationTickets = await destination.listTickets();
+  const destinationTask = destinationTickets.find((ticket) => ticket.source.ticketId === task.ticket.id);
+  const destinationSubtask = destinationTickets.find((ticket) => ticket.source.ticketId === subtask.ticket.id);
+
+  assert.equal(destinationTickets.length, 3);
+  assert.equal(transferred.ticket.type, 'story');
+  assert.equal(destinationTask.parent, transferred.ticket.id);
+  assert.equal(destinationSubtask.parent, destinationTask.id);
+  assert.deepEqual((await source.listTickets()), []);
+  assert.equal((await source.getTicket(story.ticket.id)).transferredTo.ticketId, transferred.ticket.id);
+  assert.equal((await source.getTicket(task.ticket.id)).transferredTo.ticketId, destinationTask.id);
+  assert.equal((await source.getTicket(subtask.ticket.id)).transferredTo.ticketId, destinationSubtask.id);
+});
+
+test('transferring a parent preserves archived descendants', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Moving story', type: 'story' });
+  const task = await source.createTicket({ title: 'Archived task', type: 'task', parent: story.ticket.id });
+  await source.archiveTicket(task.ticket.id);
+
+  await transferTicket(source, destination, story.ticket.id, { actor: 'captain-web' });
+
+  const transferredTask = (await destination.listTickets({ includeArchived: true })).find((ticket) => ticket.source.ticketId === task.ticket.id);
+  assert.ok(transferredTask.archivedAt);
+  assert.equal((await destination.listTickets()).some((ticket) => ticket.id === transferredTask.id), false);
+});
+
+test('archiving a parent rejects active descendants', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const story = await board.createTicket({ title: 'Archive parent', type: 'story' });
+  await board.createTicket({ title: 'Active descendant', type: 'task', parent: story.ticket.id });
+
+  await assert.rejects(() => board.archiveTicket(story.ticket.id), /descendant .* is active/);
+});
+
+test('updates cannot archive a parent with active descendants', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const story = await board.createTicket({ title: 'Update archive parent', type: 'story' });
+  const task = await board.createTicket({ title: 'Active update descendant', type: 'task', parent: story.ticket.id });
+
+  await assert.rejects(() => board.updateTicket(story.ticket.id, { archivedAt: new Date().toISOString() }), /descendant .* is active/);
+  assert.equal((await board.getTicket(story.ticket.id)).archivedAt, null);
+  assert.equal((await board.getTicket(task.ticket.id)).archivedAt, null);
+});
+
+test('active tickets cannot be created or reparented beneath archived parents', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const archivedStory = await board.createTicket({ title: 'Archived story', type: 'story' });
+  await board.archiveTicket(archivedStory.ticket.id);
+  const activeStory = await board.createTicket({ title: 'Active story', type: 'story' });
+  const activeTask = await board.createTicket({ title: 'Active task', type: 'task', parent: activeStory.ticket.id });
+
+  await assert.rejects(() => board.createTicket({ title: 'Blocked task', type: 'task', parent: archivedStory.ticket.id }), /archived parent/);
+  await assert.rejects(() => board.updateTicket(activeTask.ticket.id, { parent: archivedStory.ticket.id }), /archived parent/);
+  const staged = await board.createTicketUnlocked({ title: 'Archived staging task', type: 'task', parent: archivedStory.ticket.id, archivedAt: new Date().toISOString() });
+  assert.ok(staged.ticket.archivedAt);
+});
+
+test('updates cannot reactivate a child beneath an archived parent', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const story = await board.createTicket({ title: 'Archived parent', type: 'story' });
+  const task = await board.createTicket({ title: 'Archived child', type: 'task', parent: story.ticket.id });
+  await board.archiveTicket(task.ticket.id);
+  await board.archiveTicket(story.ticket.id);
+
+  await assert.rejects(() => board.updateTicket(task.ticket.id, { archivedAt: null }), /archived parent/);
+});
+
+test('transfer restores archived ancestors required by active descendants', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Transfer hierarchy', type: 'story' });
+  const task = await source.createTicket({ title: 'Archived parent', type: 'task', parent: story.ticket.id });
+  const subtask = await source.createTicket({ title: 'Active child', type: 'subtask', parent: task.ticket.id });
+  const archivedTask = { ...(await source.getTicket(task.ticket.id)), archivedAt: new Date().toISOString() };
+  await source.writeTicket(archivedTask);
+
+  await transferTicket(source, destination, story.ticket.id);
+
+  const moved = await destination.listTickets();
+  const movedTask = moved.find((ticket) => ticket.source.ticketId === task.ticket.id);
+  const movedSubtask = moved.find((ticket) => ticket.source.ticketId === subtask.ticket.id);
+  assert.ok(movedTask);
+  assert.equal(movedSubtask.parent, movedTask.id);
+});
+
+test('transferring a standalone subtask preserves its type', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Source story', type: 'story' });
+  const task = await source.createTicket({ title: 'Source task', type: 'task', parent: story.ticket.id });
+  const subtask = await source.createTicket({ title: 'Transfer me', type: 'subtask', parent: task.ticket.id });
+
+  const transferred = await transferTicket(source, destination, subtask.ticket.id, { actor: 'captain-web' });
+
+  assert.equal(transferred.ticket.type, 'subtask');
+  assert.equal(transferred.ticket.parent, null);
+  assert.equal((await destination.getTicketDetail(transferred.ticket.id)).activity.some((event) => event.action === 'ticket-demoted-on-transfer'), false);
+  const edited = await destination.updateTicket(transferred.ticket.id, { title: 'Edited standalone transfer', type: 'subtask', parent: null });
+  assert.equal(edited.ticket.title, 'Edited standalone transfer');
+});
+
+test('transferring a parent reparents an already transferred child', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Parent later', type: 'story' });
+  const task = await source.createTicket({ title: 'Child first', type: 'task', parent: story.ticket.id });
+  const movedTask = await transferTicket(source, destination, task.ticket.id);
+
+  const movedStory = await transferTicket(source, destination, story.ticket.id);
+
+  assert.equal((await destination.getTicket(movedTask.ticket.id)).parent, movedStory.ticket.id);
+});
+
+test('type changes reject parent links that would invalidate existing children', async () => {
+  const root = await temporaryDirectory();
+  const board = await BoardStore.initialize(root);
+  const story = await board.createTicket({ title: 'Story', type: 'story' });
+  const task = await board.createTicket({ title: 'Task', type: 'task', parent: story.ticket.id });
+  const otherTask = await board.createTicket({ title: 'Other task', type: 'task', parent: story.ticket.id });
+  const subtask = await board.createTicket({ title: 'Subtask', type: 'subtask', parent: task.ticket.id });
+
+  await assert.rejects(() => board.updateTicket(story.ticket.id, { type: 'task' }), new RegExp(`incompatible children: ${task.ticket.id} \\(task\\)`));
+  await assert.rejects(() => board.updateTicket(task.ticket.id, { type: 'subtask', parent: otherTask.ticket.id }), new RegExp(`incompatible children: ${subtask.ticket.id} \\(subtask\\)`));
+  const standalone = await board.createTicket({ title: 'Standalone task' });
+  await assert.rejects(() => board.updateTicket(standalone.ticket.id, { type: 'subtask', parent: standalone.ticket.id }), /cannot be its own parent/);
+});
+
+test('a failed source subtree archival rolls back both boards', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Recover transfer', type: 'story' });
+  const task = await source.createTicket({ title: 'Retain source hierarchy', type: 'task', parent: story.ticket.id });
   const archiveTicketUnlocked = source.archiveTicketUnlocked.bind(source);
-  source.archiveTicketUnlocked = async () => { throw new Error('Source write failed.'); };
+  source.archiveTicketUnlocked = async (id, options) => {
+    if (id === task.ticket.id) throw new Error('Source write failed.');
+    return archiveTicketUnlocked(id, options);
+  };
 
-  await assert.rejects(() => transferTicket(source, destination, ticket.id), /Source write failed/);
-  assert.equal((await source.listTickets()).length, 1);
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Source write failed/);
+  const remaining = await source.listTickets();
+  assert.equal(remaining.length, 2);
+  assert.equal(remaining.find((ticket) => ticket.id === task.ticket.id).parent, story.ticket.id);
   assert.equal((await destination.listTickets()).length, 0);
-  assert.equal((await destination.listTickets({ includeArchived: true })).length, 1);
+  assert.deepEqual((await source.activity(0)).events.map((event) => event.action), ['ticket-created', 'ticket-created', 'transfer-rolled-back']);
+  assert.deepEqual((await destination.activity(0)).events.map((event) => event.action), ['transfer-rolled-back']);
+});
 
-  source.archiveTicketUnlocked = archiveTicketUnlocked;
-  const transferred = await transferTicket(source, destination, ticket.id);
+test('a failed parent transfer does not reactivate an earlier child transfer', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Later parent', type: 'story' });
+  const task = await source.createTicket({ title: 'Earlier child', type: 'task', parent: story.ticket.id });
+  const movedTask = await transferTicket(source, destination, task.ticket.id);
+  const archiveTicketUnlocked = source.archiveTicketUnlocked.bind(source);
+  source.archiveTicketUnlocked = async (id, options) => {
+    if (id === story.ticket.id) throw new Error('Source write failed.');
+    return archiveTicketUnlocked(id, options);
+  };
+
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Source write failed/);
+  assert.equal((await source.listTickets()).map((ticket) => ticket.id).join(','), story.ticket.id);
+  assert.equal((await destination.getTicket(movedTask.ticket.id)).archivedAt, null);
+});
+
+test('a failed destination subtree staging rolls back created copies', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Stage transfer', type: 'story' });
+  const task = await source.createTicket({ title: 'Stage child', type: 'task', parent: story.ticket.id });
+  const createTicketUnlocked = destination.createTicketUnlocked.bind(destination);
+  destination.createTicketUnlocked = async (changes) => {
+    if (changes.title === task.ticket.title) throw new Error('Destination write failed.');
+    return createTicketUnlocked(changes);
+  };
+
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Destination write failed/);
+  assert.equal((await source.listTickets()).length, 2);
+  assert.equal((await destination.listTickets({ includeArchived: true })).length, 0);
+});
+
+test('a destination staging event failure removes its written ticket', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Event failure stage', type: 'story' });
+  await source.createTicket({ title: 'Event failure child', type: 'task', parent: story.ticket.id });
+  const appendEvent = destination.appendEvent.bind(destination);
+  let failCreateEvent = true;
+  destination.appendEvent = async (...args) => {
+    if (failCreateEvent && args[0] === 'ticket-created') {
+      failCreateEvent = false;
+      throw new Error('Destination event failed.');
+    }
+    return appendEvent(...args);
+  };
+
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Destination event failed/);
+  assert.equal((await source.listTickets()).length, 2);
+  assert.equal((await destination.listTickets({ includeArchived: true })).length, 0);
+});
+
+test('resuming an interrupted subtree transfer restores transferred active tickets', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Resume transfer', type: 'story' });
+  const task = await source.createTicket({ title: 'Resume child', type: 'task', parent: story.ticket.id });
+  const destinationStory = await destination.createTicket({ title: story.ticket.title, type: 'story', source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: story.ticket.id } });
+  const destinationTask = await destination.createTicket({ title: task.ticket.title, type: 'task', parent: destinationStory.ticket.id, source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: task.ticket.id } });
+  await destination.archiveTicket(destinationTask.ticket.id);
+  await destination.archiveTicket(destinationStory.ticket.id);
+  await source.archiveTicketUnlocked(story.ticket.id, { transferredTo: { ticketId: destinationStory.ticket.id, projectPath: destination.root }, allowActiveDescendants: true });
+
+  await transferTicket(source, destination, story.ticket.id);
+
+  const moved = await destination.listTickets();
+  assert.equal(moved.length, 2);
+  assert.equal(moved.find((ticket) => ticket.id === destinationTask.ticket.id).parent, destinationStory.ticket.id);
   assert.equal((await source.listTickets()).length, 0);
-  assert.equal((await destination.listTickets()).length, 1);
-  assert.equal(transferred.ticket.title, 'Recover transfer');
+});
+
+test('a failed transfer resume restores both boards to their prior state', async () => {
+  const root = await temporaryDirectory();
+  const source = await BoardStore.initialize(path.join(root, 'source'), { name: 'Source' });
+  const destination = await BoardStore.initialize(path.join(root, 'destination'), { name: 'Destination' });
+  const story = await source.createTicket({ title: 'Resume rollback', type: 'story' });
+  const task = await source.createTicket({ title: 'Resume rollback child', type: 'task', parent: story.ticket.id });
+  const destinationStory = await destination.createTicket({ title: story.ticket.title, type: 'story', source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: story.ticket.id } });
+  const destinationTask = await destination.createTicket({ title: task.ticket.title, type: 'task', parent: destinationStory.ticket.id, source: { type: 'crewboard-transfer', projectPath: source.root, ticketId: task.ticket.id } });
+  await destination.archiveTicket(destinationTask.ticket.id);
+  await destination.archiveTicket(destinationStory.ticket.id);
+  await source.archiveTicketUnlocked(story.ticket.id, { transferredTo: { ticketId: destinationStory.ticket.id, projectPath: destination.root }, allowActiveDescendants: true });
+  const restoreTicketUnlocked = destination.restoreTicketUnlocked.bind(destination);
+  destination.restoreTicketUnlocked = async (id, options) => {
+    if (id === destinationTask.ticket.id) throw new Error('Destination restore failed.');
+    return restoreTicketUnlocked(id, options);
+  };
+
+  await assert.rejects(() => transferTicket(source, destination, story.ticket.id), /Destination restore failed/);
+  assert.equal((await source.listTickets()).length, 2);
+  assert.equal((await destination.listTickets()).length, 0);
+  assert.equal((await destination.listTickets({ includeArchived: true })).length, 2);
 });

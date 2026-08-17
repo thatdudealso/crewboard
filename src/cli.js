@@ -22,14 +22,17 @@ export const usage = `crewboard - a git-native coordination board for agent flee
 
 Usage:
   crewboard init [--name <name>] [--statuses inbox,ready,active,review,done]
-  crewboard create <title> [--body <text>] [--status <column>] [--assignee <name>] [--label <label>] [--priority <value>] [--link <url-or-path>] [--as <agent>]
+  crewboard create <title> [--type story|task|subtask] [--parent <id>] [--body <text>]
+                 [--status <column>] [--assignee <name>] [--label <label>] [--priority <level>] [--link <url>]
   crewboard list [--status <column>] [--assignee <name>]
   crewboard show <ticket-id>
+  crewboard tree [<ticket-id>]
   crewboard move <ticket-id> <status> [--as <agent>] [--note <text>]
   crewboard assign <ticket-id> <agent> [--as <agent>]
   crewboard comment <ticket-id> <message> --as <agent> [--mention <agent>] [--reply-to <message-id>]
   crewboard inbox --as <agent> [--since <cursor>]
   crewboard activity [--since <cursor>]
+  crewboard agents
   crewboard import tasks-axi <backlog.md> [--as <agent>]
   crewboard web [--workspace <workspace.json>] [--port <port>]
   crewboard github attention [--all] [--workspace <workspace.json>]
@@ -44,7 +47,8 @@ Usage:
   crewboard workspace arrange <project-id> <up|down>
   crewboard workspace list [--file <workspace.json>]
 
-All commands accept --json. Board commands also accept --board <project-path>.`;
+All commands accept --json. Board commands also accept --board <project-path>.
+Ticket ids are short slugs such as premium-features-x4f2; unambiguous prefixes work for lookup.`;
 
 function parseArguments(argv) {
   const positionals = [];
@@ -74,9 +78,17 @@ function optionList(value) {
   return Array.isArray(value) ? value : [value];
 }
 
+function progressLabel(ticket) {
+  if (!ticket.progress || ticket.progress.total === 0) return '';
+  if (ticket.progress.kind === 'self' && ticket.type === 'subtask') return '';
+  return ` [${ticket.progress.completed}/${ticket.progress.total}]`;
+}
+
 function humanTicket(ticket) {
   const owner = ticket.assignee ? ` · @${ticket.assignee}` : '';
-  return `${ticket.id}  ${ticket.status.padEnd(7)} ${ticket.title}${owner}`;
+  const assignedBy = ticket.assignedBy ? ` · by @${ticket.assignedBy}` : '';
+  const type = ticket.type ? ` · ${ticket.type}` : '';
+  return `${ticket.id}  ${ticket.status.padEnd(7)} ${ticket.title}${type}${progressLabel(ticket)}${owner}${assignedBy}`;
 }
 
 function humanActivity(event) {
@@ -85,6 +97,12 @@ function humanActivity(event) {
   if (event.action === 'ticket-moved') return `${event.cursor}  ${subject}  moved ${event.data.from} -> ${event.data.to}`;
   if (event.action === 'ticket-created') return `${event.cursor}  ${subject}  created: ${event.data.title}`;
   return `${event.cursor}  ${subject}  ${event.action}`;
+}
+
+function renderTreeNode(node, indent = '') {
+  const lines = [`${indent}${node.type || 'task'}  ${humanTicket(node)}`];
+  for (const child of node.nodes || []) lines.push(...renderTreeNode(child, `${indent}  `));
+  return lines;
 }
 
 function render(value, { json, human }) {
@@ -131,19 +149,9 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
       json,
       human: (value) => {
         if (!value.available) return `GitHub attention unavailable: ${value.error}`;
-        if (!value.items.length) {
-          return value.notice
-            || (value.mode === 'all' ? 'No open GitHub items for the configured repositories.' : 'Nothing on GitHub needs the captain right now.');
-        }
+        if (!value.items.length) return value.notice || (value.mode === 'all' ? 'No open GitHub items for the configured repositories.' : 'Nothing on GitHub needs the captain right now.');
         return value.items.map((item) => {
-          const flags = [
-            item.kind.toUpperCase(),
-            item.draft ? 'draft' : null,
-            item.reviewState !== 'none' ? `review:${item.reviewState}` : null,
-            item.mergeableState !== 'unknown' ? `merge:${item.mergeableState}` : null,
-            item.ciStatus !== 'unknown' ? `ci:${item.ciStatus}` : null,
-            item.reasons.length ? `why:${item.reasons.join(',')}` : null,
-          ].filter(Boolean).join(' · ');
+          const flags = [item.kind.toUpperCase(), item.draft ? 'draft' : null, item.reviewState !== 'none' ? `review:${item.reviewState}` : null, item.mergeableState !== 'unknown' ? `merge:${item.mergeableState}` : null, item.ciStatus !== 'unknown' ? `ci:${item.ciStatus}` : null, item.reasons.length ? `why:${item.reasons.join(',')}` : null].filter(Boolean).join(' · ');
           return `${item.repo}#${item.number}  ${item.title}\n  ${flags}\n  ${item.url}`;
         }).join('\n');
       },
@@ -215,6 +223,8 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
       labels: optionList(options.label),
       priority: options.priority,
       links: optionList(options.link),
+      type: options.type,
+      parent: options.parent || null,
       actor: options.as || null,
     });
     return render(result, { json, human: (value) => `Created ${humanTicket(value.ticket)}` });
@@ -228,11 +238,37 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
     const [id] = arguments_;
     if (!id) throw new Error('Usage: crewboard show <ticket-id>.');
     const board = await BoardStore.open(root);
-    const ticket = await board.getTicket(id);
-    return render({ ticket }, { json, human: (value) => {
-      const messages = value.ticket.messages.length ? `\n\nMessages\n${value.ticket.messages.map((message) => `- ${message.createdAt} @${message.author}: ${message.body}`).join('\n')}` : '';
-      return `${humanTicket(value.ticket)}\n\n${value.ticket.body || '(no description)'}${messages}`;
+    const ticket = await board.getTicketDetail(id);
+    return render(ticket, { json, human: (value) => {
+      const ancestors = value.breadcrumb?.length
+        ? `Breadcrumb\n${value.breadcrumb.map((item) => `- ${item.kind}${item.id ? `  ${item.id}` : ''}  ${item.title}`).join('\n')}\n\n`
+        : '';
+      const children = (value.ticket.childTickets || []).length
+        ? `Children\n${value.ticket.childTickets.map((child) => `- ${child.type}  ${child.id}  ${child.status.padEnd(7)} ${child.title}${child.assignee ? ` @${child.assignee}` : ''} [${child.progress.completed}/${child.progress.total}]`).join('\n')}\n\n`
+        : '';
+      const activity = value.activity?.length
+        ? `Activity\n${value.activity.map((entry) => `- ${entry.at}  ${entry.action}${entry.actor ? ` @${entry.actor}` : ''}`).join('\n')}\n\n`
+        : '';
+      const comments = value.comments?.length ? `Comments\n${value.comments.map((message) => `- ${message.createdAt} @${message.author}: ${message.body}`).join('\n')}` : '';
+      return `${ancestors}${humanTicket(value.ticket)}\nReporter: ${value.ticket.reporter ? `@${value.ticket.reporter}` : '—'}${value.ticket.assignedBy ? ` · assigned by @${value.ticket.assignedBy}` : ''}\nPriority: ${value.ticket.priority}\nProgress: ${value.ticket.progress.completed}/${value.ticket.progress.total} ${value.ticket.progress.kind}\nCreated: ${value.ticket.createdAt}\nUpdated: ${value.ticket.updatedAt}\n\n${value.ticket.body || '(no description)'}\n\n${children}${activity}${comments}`.trim();
     } });
+  }
+  if (command === 'tree') {
+    const [id] = arguments_;
+    const board = await BoardStore.open(root);
+    const tree = await board.tree(id || null);
+    return render(tree, { json, human: (value) => {
+      if (value.roots) {
+        const lines = value.roots.flatMap((node) => renderTreeNode(node));
+        return lines.length ? lines.join('\n') : 'No tickets.';
+      }
+      return renderTreeNode(value).join('\n');
+    } });
+  }
+  if (command === 'agents') {
+    const board = await BoardStore.open(root);
+    const result = await board.agents();
+    return render(result, { json, human: (value) => value.agents.map((agent) => `${agent.name.padEnd(12)} ${agent.role.padEnd(8)} ${agent.description}`).join('\n') });
   }
   if (command === 'move') {
     const [id, status] = arguments_;
@@ -244,7 +280,10 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
     const [id, assignee] = arguments_;
     if (!id || !assignee) throw new Error('Usage: crewboard assign <ticket-id> <agent>.');
     const result = await assignTicket(root, id, assignee, { actor: options.as || null });
-    return render(result, { json, human: (value) => `Assigned ${value.ticket.id} to @${value.ticket.assignee}.` });
+    return render(result, { json, human: (value) => {
+      const by = value.ticket.assignedBy ? ` by @${value.ticket.assignedBy}` : '';
+      return `Assigned ${value.ticket.id} to @${value.ticket.assignee}${by}.`;
+    } });
   }
   if (command === 'comment') {
     const [id, ...messageParts] = arguments_;
@@ -270,7 +309,7 @@ export async function run(argv, { cwd = process.cwd() } = {}) {
     if (kind !== 'tasks-axi' || !sourcePath) throw new Error('Usage: crewboard import tasks-axi <backlog.md>.');
     const board = await BoardStore.open(root);
     const result = await importTasksAxi(board, path.resolve(cwd, sourcePath), { actor: options.as || 'tasks-axi' });
-    return render(result, { json, human: (value) => `tasks-axi sync: ${value.imported.length} imported, ${value.updated.length} updated, ${value.unchanged.length} unchanged.` });
+    return render(result, { json, human: (value) => `tasks-axi sync: ${value.imported.length} imported, ${value.updated.length} updated, ${value.unchanged.length} unchanged, ${value.normalizations.length} priority normalized.` });
   }
   throw new Error(`Unknown command: ${command}. Run \`crewboard help\`.`);
 }

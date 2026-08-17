@@ -68,6 +68,13 @@ test('the local web controller creates and moves tickets through the shared work
     });
     assert.equal(emptyStatus.status, 400);
     assert.match((await emptyStatus.json()).error.message, /Unknown status/);
+    const reassigned = await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, 'PATCH', { assignee: 'builder' }, csrfToken);
+    assert.equal(reassigned.ticket.assignedBy, 'captain-web');
+    const edited = await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, 'PATCH', { title: 'Moved through the web board', assignee: 'builder' }, csrfToken);
+    assert.equal(edited.ticket.assignedBy, 'captain-web');
+    assert.equal(edited.event.action, 'ticket-edited');
+    const spoofed = await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}`, 'PATCH', { assignedBy: 'impostor' }, csrfToken);
+    assert.equal(spoofed.ticket.assignedBy, 'captain-web');
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/messages`, 'POST', { body: 'Ready to hand off.' }, csrfToken);
     await request(`${url}/api/projects/${source.project.id}/tickets/${ticket.ticket.id}/transfer`, 'POST', {
       destinationProjectId: destination.project.id,
@@ -76,7 +83,7 @@ test('the local web controller creates and moves tickets through the shared work
     const board = await request(`${url}/api/board`);
     assert.equal(board.projects.find((project) => project.id === source.project.id).tickets.length, 0);
     const moved = board.projects.find((project) => project.id === destination.project.id).tickets[0];
-    assert.equal(moved.title, 'Move through the web board');
+    assert.equal(moved.title, 'Moved through the web board');
     assert.equal(moved.messages[0].body, 'Ready to hand off.');
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BoardStore, transferTicket } from './store.js';
+import { assembleGithubAttention } from './github-attention.js';
 import {
   approveWorkspaceProject,
   arrangeWorkspaceProject,
@@ -65,12 +66,14 @@ async function boardForProject(workspaceFile, projectId) {
 
 function editableTicketChanges(body) {
   const changes = {};
-  for (const key of ['title', 'body', 'status', 'assignee', 'priority']) {
+  for (const key of ['title', 'body', 'status', 'assignee', 'priority', 'type', 'parent', 'reporter']) {
     if (body[key] !== undefined) changes[key] = body[key];
   }
   if (body.labels !== undefined) changes.labels = Array.isArray(body.labels) ? body.labels : String(body.labels).split(',');
   if (body.links !== undefined) changes.links = Array.isArray(body.links) ? body.links : String(body.links).split(',');
   if (changes.assignee === '') changes.assignee = null;
+  if (changes.parent === '') changes.parent = null;
+  if (changes.reporter === '') changes.reporter = null;
   return changes;
 }
 
@@ -87,6 +90,13 @@ async function snapshot(workspaceFile) {
 async function api(request, response, workspaceFile, csrfToken, { parts }) {
   if (request.method !== 'GET') assertCsrf(request, csrfToken);
   if (request.method === 'GET' && parts.join('/') === 'api/board') return sendJson(response, 200, await snapshot(workspaceFile));
+  if (request.method === 'GET' && parts.join('/') === 'api/github/attention') {
+    const query = new URL(request.url, 'http://127.0.0.1').searchParams;
+    return sendJson(response, 200, await assembleGithubAttention({
+      workspaceFile,
+      all: query.get('all') === '1' || query.get('all') === 'true',
+    }));
+  }
   if (request.method === 'POST' && parts.join('/') === 'api/projects/discover') {
     const body = await readBody(request);
     return sendJson(response, 200, await discoverProjects(workspaceFile, body));
@@ -119,12 +129,22 @@ async function api(request, response, workspaceFile, csrfToken, { parts }) {
   if (parts[3] !== 'tickets' || !parts[4]) return sendJson(response, 404, { error: { message: 'Unknown project API route.' } });
   const ticketId = parts[4];
   const { board } = await boardForProject(workspaceFile, projectId);
+  if (request.method === 'GET' && parts.length === 5) {
+    return sendJson(response, 200, await board.getTicketDetail(ticketId));
+  }
   if (request.method === 'PATCH' && parts.length === 5) {
     const body = await readBody(request);
-    return sendJson(response, 200, await board.updateTicket(ticketId, editableTicketChanges(body), {
-      action: 'ticket-edited',
-      actor: body.actor || 'captain-web',
-      eventData: { fields: Object.keys(editableTicketChanges(body)) },
+    const changes = editableTicketChanges(body);
+    const actor = body.actor || 'captain-web';
+    const current = await board.getTicket(ticketId);
+    const assigneeChanged = changes.assignee !== undefined && changes.assignee !== current.assignee;
+    if (assigneeChanged) changes.assignedBy = changes.assignee ? actor : null;
+    return sendJson(response, 200, await board.updateTicket(ticketId, changes, {
+      action: assigneeChanged ? 'ticket-assigned' : 'ticket-edited',
+      actor,
+      eventData: assigneeChanged
+        ? { assignee: changes.assignee, assignedBy: changes.assignedBy ?? null }
+        : { fields: Object.keys(changes) },
     }));
   }
   if (request.method === 'POST' && parts.length === 6 && parts[5] === 'messages') {
@@ -164,20 +184,16 @@ function page(csrfToken) {
 <div class="app">
   <aside class="sidebar">
     <div class="brand">Crewboard <span class="live">LIVE</span></div>
-    <section class="sidebar-section">
-      <div class="nav-label">Views</div>
-      <button class="nav-button active" data-view="board">Board</button>
-      <button class="nav-button" data-view="messages">Message board</button>
-      <button class="nav-button" data-view="projects">Projects</button>
-    </section>
-    <section class="sidebar-section">
-      <div class="nav-label">Active projects</div>
-      <div id="project-nav"></div>
-    </section>
-    <section class="sidebar-section">
-      <div class="nav-label">Pending approval</div>
-      <div id="pending-nav"></div>
-    </section>
+    <div class="nav-label">Views</div>
+    <button class="nav-button active" data-view="board">Board</button>
+    <button class="nav-button" data-view="backlog">Backlog</button>
+    <button class="nav-button" data-view="tree">Structure</button>
+    <button class="nav-button" data-view="agents">Agents</button>
+    <button class="nav-button" data-view="projects">Projects</button>
+    <div class="nav-label">Active projects</div>
+    <div id="project-nav"></div>
+    <div class="nav-label">Pending approval</div>
+    <div id="pending-nav"></div>
   </aside>
   <main class="main"><div id="app"></div></main>
 </div>

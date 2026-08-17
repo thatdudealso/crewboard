@@ -2,21 +2,46 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from './atomic.js';
+import { ensureAgentsRegistry, listAgents } from './agents.js';
+import {
+  assertParentLink,
+  buildTree,
+  decorateTicket,
+  normalizeTicketType,
+  PARENT_TYPE,
+} from './hierarchy.js';
+import { generateTicketId, LEGACY_TICKET_ID, resolveTicketQuery, slugifyTitle, ticketFileName } from './ids.js';
 import { withFileLock } from './lock.js';
+import { normalizePriority } from './priority.js';
 import { DEFAULT_COLUMNS, cleanList, eventCursor, mentionsIn, now, pathExists } from './utils.js';
 
 const BOARD_DIRECTORY = '.crewboard';
+
+function migratedTicketId(title, legacyId, existingIds) {
+  const slug = slugifyTitle(title);
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const suffix = crypto.createHash('sha256').update(`${legacyId}:${attempt}`).digest('hex').slice(0, 4);
+    const id = `${slug}-${suffix}`;
+    if (!existingIds.has(id)) return id;
+  }
+  throw new Error(`Unable to migrate legacy ticket id: ${legacyId}`);
+}
 
 function frontmatter(ticket) {
   const fields = {
     schemaVersion: 1,
     id: ticket.id,
     title: ticket.title,
+    type: ticket.type ?? 'task',
+    parent: ticket.parent ?? null,
     status: ticket.status,
     assignee: ticket.assignee ?? null,
+    assignedBy: ticket.assignedBy ?? null,
+    reporter: ticket.reporter ?? null,
     labels: ticket.labels ?? [],
-    priority: ticket.priority ?? 'normal',
+    priority: ticket.priority ?? 'medium',
     links: ticket.links ?? [],
+    aliases: ticket.aliases ?? [],
     source: ticket.source ?? null,
     position: ticket.position ?? 0,
     archivedAt: ticket.archivedAt ?? null,
@@ -49,12 +74,36 @@ function parseTicket(contents, filePath) {
   }
   const messageStart = footerIndex + footer.length;
   const messageEnd = contents.length - footerEnd.length;
-  return { ...values, body: contents.slice(header[0].length, footerIndex).trim(), messages: JSON.parse(contents.slice(messageStart, messageEnd)) };
+  return {
+    type: 'task',
+    parent: null,
+    assignedBy: null,
+    reporter: null,
+    aliases: [],
+    ...values,
+    priority: normalizePriority(values.priority ?? 'medium', { fallback: 'medium', strict: false }),
+    body: contents.slice(header[0].length, footerIndex).trim(),
+    messages: JSON.parse(contents.slice(messageStart, messageEnd)),
+  };
 }
 
-function ticketFileName(ticketId) {
-  if (!/^CB-\d{4,}$/.test(ticketId)) throw new Error(`Invalid ticket id: ${ticketId}`);
-  return `${ticketId}.md`;
+function visibleEvents(events) {
+  const reverted = new Set(events
+    .filter((event) => event.action === 'transfer-rolled-back')
+    .flatMap((event) => event.data?.revertedEventIds || []));
+  return events.filter((event) => !reverted.has(event.id));
+}
+
+function findActiveDescendant(tickets, ticketId) {
+  const pending = [ticketId];
+  while (pending.length) {
+    const parentId = pending.shift();
+    const children = tickets.filter((candidate) => candidate.parent === parentId);
+    const activeChild = children.find((candidate) => !candidate.archivedAt);
+    if (activeChild) return activeChild;
+    pending.push(...children.map((child) => child.id));
+  }
+  return null;
 }
 
 export class BoardStore {
@@ -75,6 +124,7 @@ export class BoardStore {
         updatedAt: timestamp,
         nextTicketNumber: 1,
         lastEventCursor: 0,
+        idScheme: 'slug-suffix',
       };
       const stagingPath = path.join(absoluteRoot, `.crewboard.initializing-${crypto.randomUUID()}`);
       await fs.mkdir(path.join(stagingPath, 'tickets'), { recursive: true });
@@ -82,12 +132,15 @@ export class BoardStore {
       try {
         await atomicWriteFile(path.join(stagingPath, 'board.json'), `${JSON.stringify(config, null, 2)}\n`);
         await fs.writeFile(path.join(stagingPath, 'events.jsonl'), '');
+        await ensureAgentsRegistry(stagingPath);
         await fs.rename(stagingPath, boardPath);
       } catch (error) {
         await fs.rm(stagingPath, { recursive: true, force: true });
         throw error;
       }
-      return new BoardStore(absoluteRoot, config);
+      const board = new BoardStore(absoluteRoot, config);
+      board._migrated = true;
+      return board;
     });
   }
 
@@ -100,13 +153,17 @@ export class BoardStore {
       if (error.code === 'ENOENT') throw new Error(`No Crewboard found at ${root}. Run \`crewboard init\`.`);
       throw error;
     }
-    return new BoardStore(root, config);
+    const board = new BoardStore(root, config);
+    await board.ensureBoardReady();
+    return board;
   }
 
   constructor(root, config) {
     this.root = path.resolve(root);
     this.path = path.join(this.root, BOARD_DIRECTORY);
     this.config = config;
+    this._ready = null;
+    this._migrated = false;
   }
 
   get ticketsPath() {
@@ -137,21 +194,91 @@ export class BoardStore {
     }
   }
 
+  async ensureBoardReady() {
+    if (this._migrated) return;
+    if (!this._ready) {
+      this._ready = this.withMutationLock(async () => {
+        if (this._migrated) return;
+        await ensureAgentsRegistry(this.path);
+        await this.migrateLegacyTicketIdsUnlocked();
+        if (this.config.idScheme !== 'slug-suffix') {
+          this.config.idScheme = 'slug-suffix';
+          await this.saveConfig();
+        }
+        this._migrated = true;
+      });
+    }
+    await this._ready;
+  }
+
+  async migrateLegacyTicketIdsUnlocked() {
+    let files;
+    try {
+      files = await fs.readdir(this.ticketsPath);
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    const markdownFiles = files.filter((file) => file.endsWith('.md'));
+    const existingIds = new Set(markdownFiles.map((file) => file.slice(0, -3)));
+    const shortIdByLegacyId = new Map();
+    for (const file of markdownFiles) {
+      if (LEGACY_TICKET_ID.test(file.slice(0, -3))) continue;
+      const ticket = await this.readTicketFromFile(file);
+      for (const alias of ticket.aliases || []) {
+        if (LEGACY_TICKET_ID.test(alias)) shortIdByLegacyId.set(alias, ticket.id);
+      }
+    }
+    const legacyTickets = [];
+    for (const file of markdownFiles) {
+      const legacyId = file.slice(0, -3);
+      if (!LEGACY_TICKET_ID.test(legacyId)) continue;
+      const filePath = path.join(this.ticketsPath, file);
+      if (shortIdByLegacyId.has(legacyId)) {
+        await fs.unlink(filePath);
+        continue;
+      }
+      const ticket = parseTicket(await fs.readFile(filePath, 'utf8'), filePath);
+      if (!LEGACY_TICKET_ID.test(ticket.id)) continue;
+      const shortId = migratedTicketId(ticket.title, legacyId, existingIds);
+      existingIds.add(shortId);
+      existingIds.delete(legacyId);
+      legacyTickets.push({ filePath, legacyId, shortId, ticket });
+      shortIdByLegacyId.set(legacyId, shortId);
+    }
+    for (const { filePath, legacyId, shortId, ticket } of legacyTickets) {
+      const aliases = [...new Set([...(ticket.aliases || []), legacyId, ticket.id].filter((value) => value && value !== shortId))];
+      const migrated = {
+        ...ticket,
+        id: shortId,
+        aliases,
+        type: ticket.type || 'task',
+        parent: shortIdByLegacyId.get(ticket.parent) || ticket.parent || null,
+        assignedBy: ticket.assignedBy ?? null,
+        updatedAt: now(),
+      };
+      await atomicWriteFile(path.join(this.ticketsPath, ticketFileName(shortId)), serializeTicket(migrated));
+    }
+    for (const { filePath } of legacyTickets) {
+      await fs.unlink(filePath);
+    }
+  }
+
   async writeTicket(ticket) {
     await atomicWriteFile(path.join(this.ticketsPath, ticketFileName(ticket.id)), serializeTicket(ticket));
   }
 
-  async getTicket(id) {
-    const filePath = path.join(this.ticketsPath, ticketFileName(id));
-    try {
-      return parseTicket(await fs.readFile(filePath, 'utf8'), filePath);
-    } catch (error) {
-      if (error.code === 'ENOENT') throw new Error(`Ticket not found: ${id}`);
-      throw error;
-    }
+  async readTicketFromFile(fileName) {
+    const filePath = path.join(this.ticketsPath, fileName);
+    return parseTicket(await fs.readFile(filePath, 'utf8'), filePath);
   }
 
-  async listTickets({ status, assignee, includeArchived = false } = {}) {
+  async listTicketRecords({ includeArchived = false } = {}) {
+    if (!this._migrated) await this.ensureBoardReady();
+    return this.listTicketRecordsUnlocked({ includeArchived });
+  }
+
+  async listTicketRecordsUnlocked({ includeArchived = false } = {}) {
     let files;
     try {
       files = await fs.readdir(this.ticketsPath);
@@ -159,10 +286,74 @@ export class BoardStore {
       if (error.code === 'ENOENT') return [];
       throw error;
     }
-    const tickets = await Promise.all(files.filter((file) => file.endsWith('.md')).sort().map((file) => this.getTicket(file.slice(0, -3))));
+    const tickets = await Promise.all(files.filter((file) => file.endsWith('.md')).sort().map((file) => this.readTicketFromFile(file)));
     return tickets
-      .filter((ticket) => (includeArchived || !ticket.archivedAt) && (!status || ticket.status === status) && (!assignee || ticket.assignee === assignee))
+      .filter((ticket) => includeArchived || !ticket.archivedAt)
       .sort((left, right) => (left.position ?? 0) - (right.position ?? 0) || left.id.localeCompare(right.id));
+  }
+
+  async resolveTicket(id) {
+    const tickets = await this.listTicketRecords({ includeArchived: true });
+    return resolveTicketQuery(id, tickets);
+  }
+
+  async getTicket(id) {
+    const ticket = await this.resolveTicket(id);
+    return ticket;
+  }
+
+  async getTicketView(id) {
+    const tickets = await this.listTicketRecords({ includeArchived: true });
+    const ticket = resolveTicketQuery(id, tickets);
+    return decorateTicket(ticket, tickets, this.config.columns);
+  }
+
+  async getTicketDetail(id) {
+    const tickets = await this.listTicketRecords({ includeArchived: true });
+    const ticket = decorateTicket(resolveTicketQuery(id, tickets), tickets, this.config.columns);
+    const events = visibleEvents(await this.readEvents()).filter((event) => event.ticketId === ticket.id || (ticket.aliases || []).includes(event.ticketId));
+    const activity = events
+      .filter((event) => event.action !== 'message-posted')
+      .map((event) => ({
+        id: event.id,
+        at: event.at,
+        action: event.action,
+        actor: event.actor,
+        data: event.data,
+      }))
+      .sort((left, right) => right.at.localeCompare(left.at) || right.id.localeCompare(left.id));
+    const comments = [...(ticket.messages || [])].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      ticket,
+      activity,
+      comments,
+      breadcrumb: [
+        { kind: 'project', id: null, title: this.config.name },
+        ...ticket.ancestors.map((item) => ({ kind: item.type, id: item.id, title: item.title })),
+        { kind: ticket.type, id: ticket.id, title: ticket.title },
+      ],
+    };
+  }
+
+  async listTickets({ status, assignee, includeArchived = false } = {}) {
+    const tickets = await this.listTicketRecords({ includeArchived });
+    return tickets
+      .filter((ticket) => (!status || ticket.status === status) && (!assignee || ticket.assignee === assignee))
+      .map((ticket) => decorateTicket(ticket, tickets, this.config.columns));
+  }
+
+  async tree(rootId = null) {
+    const tickets = await this.listTicketRecords();
+    if (rootId) {
+      const root = resolveTicketQuery(rootId, tickets);
+      return buildTree(tickets, this.config.columns, root.id);
+    }
+    return buildTree(tickets, this.config.columns);
+  }
+
+  async agents() {
+    await this.ensureBoardReady();
+    return listAgents(this.path);
   }
 
   async appendEvent(action, { ticketId = null, actor = null, data = {} } = {}) {
@@ -237,24 +428,39 @@ export class BoardStore {
     }
   }
 
-  async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, messages = [], position = null, actor = null }) {
-    return this.withMutationLock(() => this.createTicketUnlocked({ title, body, status, assignee, labels, priority, links, source, messages, position, actor }));
+  async createTicket({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'medium', links = [], source = null, messages = [], position = null, actor = null, type, parent = null, reporter = null }) {
+    return this.withMutationLock(() => this.createTicketUnlocked({ title, body, status, assignee, labels, priority, links, source, messages, position, actor, type, parent, reporter }));
   }
 
-  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'normal', links = [], source = null, messages = [], position = null, archivedAt = null, actor = null }) {
+  async createTicketUnlocked({ title, body = '', status = this.config.columns[0], assignee = null, labels = [], priority = 'medium', links = [], source = null, messages = [], position = null, archivedAt = null, actor = null, type, parent = null, assignedBy = null, reporter = null, allowUnparentedSubtask = false }) {
     await this.refreshConfig();
+    await ensureAgentsRegistry(this.path);
     if (!title?.trim()) throw new Error('A ticket title is required.');
     this.assertStatus(status);
-    const existingTickets = await this.listTickets({ includeArchived: true });
+    const ticketType = normalizeTicketType(type);
+    const ticketPriority = normalizePriority(priority);
+    const existingTickets = await this.listTicketRecordsUnlocked({ includeArchived: true });
+    const parentId = parent ? resolveTicketQuery(parent, existingTickets).id : null;
+    const parentTicket = parentId ? existingTickets.find((ticket) => ticket.id === parentId) : null;
+    assertParentLink({ type: ticketType, parent: parentId, parentTicket, allowUnparentedSubtask });
+    if (parentTicket?.archivedAt && !archivedAt) {
+      throw new Error(`Cannot create an active ticket under archived parent ${parentTicket.id}.`);
+    }
+    const existingIds = new Set(existingTickets.flatMap((ticket) => [ticket.id, ...(ticket.aliases || [])]));
     const ticket = {
-      id: `CB-${BigInt(`0x${crypto.randomUUID().replaceAll('-', '')}`).toString()}`,
+      id: generateTicketId(title, existingIds),
       title: title.trim(),
+      type: ticketType,
+      parent: parentId,
       body,
       status,
       assignee: assignee || null,
+      assignedBy: assignedBy ?? (assignee ? actor || null : null),
+      reporter: reporter || actor || null,
       labels: cleanList(labels),
-      priority,
+      priority: ticketPriority,
       links: cleanList(links),
+      aliases: [],
       source,
       position: position ?? existingTickets.length + 1,
       archivedAt,
@@ -268,9 +474,9 @@ export class BoardStore {
     const event = await this.appendEvent('ticket-created', {
       ticketId: ticket.id,
       actor,
-      data: { title: ticket.title, status: ticket.status, assignee: ticket.assignee },
+      data: { title: ticket.title, status: ticket.status, assignee: ticket.assignee, type: ticket.type, parent: ticket.parent },
     });
-    return { ticket, event };
+    return { ticket: decorateTicket(ticket, [...existingTickets, ticket], this.config.columns), event };
   }
 
   async updateTicket(id, changes, { action = 'ticket-updated', actor = null, eventData = {} } = {}) {
@@ -278,14 +484,52 @@ export class BoardStore {
   }
 
   async updateTicketUnlocked(id, changes, { action = 'ticket-updated', actor = null, eventData = {} } = {}) {
-    const ticket = await this.getTicket(id);
+    const tickets = await this.listTicketRecordsUnlocked({ includeArchived: true });
+    const ticket = { ...resolveTicketQuery(id, tickets) };
     if (changes.title !== undefined) {
       if (typeof changes.title !== 'string' || !changes.title.trim()) throw new Error('A ticket title is required.');
       changes.title = changes.title.trim();
     }
     if (changes.status !== undefined) this.assertStatus(changes.status);
+    if (changes.type !== undefined) changes.type = normalizeTicketType(changes.type, { required: true });
+    if (changes.priority !== undefined) changes.priority = normalizePriority(changes.priority);
+    if (changes.parent !== undefined && changes.parent) {
+      changes.parent = resolveTicketQuery(changes.parent, tickets).id;
+    }
+    const nextType = changes.type ?? ticket.type ?? 'task';
+    const nextParent = changes.parent !== undefined ? changes.parent : ticket.parent;
+    const nextArchivedAt = changes.archivedAt !== undefined ? changes.archivedAt : ticket.archivedAt;
+    if (nextParent === ticket.id) throw new Error('A ticket cannot be its own parent.');
+    const parentTicket = nextParent ? tickets.find((item) => item.id === nextParent) : null;
+    if (changes.type !== undefined || changes.parent !== undefined) {
+      assertParentLink({
+        type: nextType,
+        parent: nextParent,
+        parentTicket,
+        allowUnparentedSubtask: nextType === 'subtask'
+          && !nextParent
+          && ticket.type === 'subtask'
+          && !ticket.parent
+          && ticket.source?.type === 'crewboard-transfer',
+      });
+    }
+    if (parentTicket?.archivedAt && !nextArchivedAt) {
+      throw new Error(`Cannot place active ticket ${ticket.id} under archived parent ${parentTicket.id}.`);
+    }
+    if (!ticket.archivedAt && nextArchivedAt) {
+      const activeDescendant = findActiveDescendant(tickets, ticket.id);
+      if (activeDescendant) throw new Error(`Cannot archive ${ticket.id} while descendant ${activeDescendant.id} is active.`);
+    }
+    if (changes.type !== undefined && nextType !== (ticket.type ?? 'task')) {
+      const blocking = tickets.filter((item) => item.parent === ticket.id && !item.archivedAt && PARENT_TYPE[item.type ?? 'task'] !== nextType);
+      if (blocking.length) {
+        throw new Error(`Cannot change ${ticket.id} to a ${nextType} while it has incompatible children: ${blocking.map((item) => `${item.id} (${item.type ?? 'task'})`).join(', ')}. Reparent them first.`);
+      }
+    }
     const original = { ...ticket };
     Object.assign(ticket, changes);
+    ticket.type = nextType;
+    ticket.parent = nextParent ?? null;
     if (changes.status !== undefined && changes.status !== original.status) {
       ticket.statusHistory = [...(ticket.statusHistory || []), {
         status: changes.status,
@@ -299,16 +543,17 @@ export class BoardStore {
     if (changes.links) ticket.links = cleanList(changes.links);
     ticket.updatedAt = now();
     await this.writeTicket(ticket);
-    const event = await this.appendEvent(action, { ticketId: id, actor, data: eventData });
-    return { ticket, original, event };
+    const event = await this.appendEvent(action, { ticketId: ticket.id, actor, data: eventData });
+    const refreshed = tickets.map((item) => (item.id === ticket.id ? ticket : item));
+    return { ticket: decorateTicket(ticket, refreshed, this.config.columns), original, event };
   }
 
   async moveTicket(id, status, { actor = null, note = null } = {}) {
     return this.withMutationLock(async () => {
       this.assertStatus(status);
-      const current = await this.getTicket(id);
-      if (current.status === status) return { ticket: current, event: null, unchanged: true };
-      const result = await this.updateTicketUnlocked(id, { status }, {
+      const current = resolveTicketQuery(id, await this.listTicketRecordsUnlocked({ includeArchived: true }));
+      if (current.status === status) return { ticket: decorateTicket(current, await this.listTicketRecordsUnlocked({ includeArchived: true }), this.config.columns), event: null, unchanged: true };
+      const result = await this.updateTicketUnlocked(current.id, { status }, {
         action: 'ticket-moved',
         actor,
         eventData: { from: current.status, to: status, note },
@@ -318,10 +563,13 @@ export class BoardStore {
   }
 
   async assignTicket(id, assignee, { actor = null } = {}) {
-    return this.withMutationLock(() => this.updateTicketUnlocked(id, { assignee: assignee || null }, {
+    return this.withMutationLock(() => this.updateTicketUnlocked(id, {
+      assignee: assignee || null,
+      assignedBy: assignee ? actor || null : null,
+    }, {
       action: 'ticket-assigned',
       actor,
-      eventData: { assignee: assignee || null },
+      eventData: { assignee: assignee || null, assignedBy: assignee ? actor || null : null },
     }));
   }
 
@@ -333,7 +581,8 @@ export class BoardStore {
     if (!Array.isArray(ticketIds) || ticketIds.length === 0) throw new Error('At least one ticket id is required to reorder tickets.');
     if (new Set(ticketIds).size !== ticketIds.length) throw new Error('Ticket ids must be unique when reordering.');
     if (status) this.assertStatus(status);
-    const tickets = await Promise.all(ticketIds.map((id) => this.getTicket(id)));
+    const allTickets = await this.listTicketRecordsUnlocked({ includeArchived: true });
+    const tickets = ticketIds.map((id) => resolveTicketQuery(id, allTickets));
     if (tickets.some((ticket) => ticket.archivedAt)) throw new Error('Archived tickets cannot be reordered.');
     for (const [index, ticket] of tickets.entries()) {
       const previousStatus = ticket.status;
@@ -353,24 +602,29 @@ export class BoardStore {
     }
     const event = await this.appendEvent('tickets-reordered', {
       actor,
-      data: { status, ticketIds },
+      data: { status, ticketIds: tickets.map((ticket) => ticket.id) },
     });
-    return { tickets, event };
+    return { tickets: tickets.map((ticket) => decorateTicket(ticket, allTickets, this.config.columns)), event };
   }
 
   async archiveTicket(id, { actor = null, transferredTo = null } = {}) {
     return this.withMutationLock(() => this.archiveTicketUnlocked(id, { actor, transferredTo }));
   }
 
-  async archiveTicketUnlocked(id, { actor = null, transferredTo = null } = {}) {
-    const ticket = await this.getTicket(id);
+  async archiveTicketUnlocked(id, { actor = null, transferredTo = null, allowActiveDescendants = false } = {}) {
+    const tickets = await this.listTicketRecordsUnlocked({ includeArchived: true });
+    const ticket = resolveTicketQuery(id, tickets);
     if (ticket.archivedAt) return { ticket, event: null, unchanged: true };
+    if (!allowActiveDescendants) {
+      const activeDescendant = findActiveDescendant(tickets, ticket.id);
+      if (activeDescendant) throw new Error(`Cannot archive ${ticket.id} while descendant ${activeDescendant.id} is active.`);
+    }
     ticket.archivedAt = now();
     ticket.transferredTo = transferredTo;
     ticket.updatedAt = ticket.archivedAt;
     await this.writeTicket(ticket);
     const event = await this.appendEvent(transferredTo ? 'ticket-transferred' : 'ticket-archived', {
-      ticketId: id,
+      ticketId: ticket.id,
       actor,
       data: { transferredTo },
     });
@@ -378,13 +632,13 @@ export class BoardStore {
   }
 
   async restoreTicketUnlocked(id, { actor = null } = {}) {
-    const ticket = await this.getTicket(id);
+    const ticket = resolveTicketQuery(id, await this.listTicketRecordsUnlocked({ includeArchived: true }));
     if (!ticket.archivedAt) return { ticket, event: null, unchanged: true };
     ticket.archivedAt = null;
     ticket.updatedAt = now();
     await this.writeTicket(ticket);
     const event = await this.appendEvent('ticket-restored', {
-      ticketId: id,
+      ticketId: ticket.id,
       actor,
     });
     return { ticket, event, unchanged: false };
@@ -397,7 +651,7 @@ export class BoardStore {
   async addCommentUnlocked(id, { author, body, mentions = [], replyTo = null }) {
     if (!author?.trim()) throw new Error('A comment author is required. Pass --as <agent-name>.');
     if (!body?.trim()) throw new Error('A comment body is required.');
-    const ticket = await this.getTicket(id);
+    const ticket = resolveTicketQuery(id, await this.listTicketRecordsUnlocked({ includeArchived: true }));
     const replyTarget = replyTo?.trim() || null;
     if (replyTarget && !ticket.messages.some((message) => message.id === replyTarget)) {
       throw new Error(`Reply target not found: ${replyTarget}`);
@@ -414,7 +668,7 @@ export class BoardStore {
     ticket.updatedAt = now();
     await this.writeTicket(ticket);
     const event = await this.appendEvent('message-posted', {
-      ticketId: id,
+      ticketId: ticket.id,
       actor: message.author,
       data: { message },
     });
@@ -433,16 +687,16 @@ export class BoardStore {
       processed.add(id);
       pending.push(...(eventById.get(id)?.parents || []));
     }
-    const events = checkpoint.eventIds.size
+    const events = (checkpoint.eventIds.size
       ? allEvents.filter((event) => !processed.has(event.id))
-      : allEvents.filter((event) => event.cursor > checkpoint.legacyCursor);
+      : allEvents.filter((event) => event.cursor > checkpoint.legacyCursor));
     const parentIds = new Set(allEvents.flatMap((event) => event.parents || []));
     const heads = allEvents
       .filter((event) => !parentIds.has(event.id))
       .map((event) => event.id)
       .sort();
     const cursor = `v1.${Buffer.from(JSON.stringify(heads)).toString('base64url')}`;
-    return { events, cursor };
+    return { events: visibleEvents(events), cursor };
   }
 
   async inbox(agent, since = 0) {
@@ -452,6 +706,7 @@ export class BoardStore {
     const assignments = activity.events.filter((event) => event.action === 'ticket-assigned' && event.actor !== agent && event.data.assignee === agent);
     return { agent, messages, assignments, cursor: activity.cursor };
   }
+
 }
 
 export async function withBoardMutationLocks(boards, operation) {
@@ -467,38 +722,176 @@ export async function transferTicket(sourceBoard, destinationBoard, ticketId, { 
   if (sourceBoard.root === destinationBoard.root) throw new Error('Choose a different project when moving a ticket across projects.');
   return withBoardMutationLocks([sourceBoard, destinationBoard], async () => {
     await Promise.all([sourceBoard.refreshConfig(), destinationBoard.refreshConfig()]);
-    const sourceTicket = await sourceBoard.getTicket(ticketId);
-    const recovered = (await destinationBoard.listTickets({ includeArchived: true })).find((ticket) => (
-      ticket.source?.type === 'crewboard-transfer'
-      && ticket.source.projectPath === sourceBoard.root
-      && ticket.source.ticketId === sourceTicket.id
-    ));
+    const sourceTickets = await sourceBoard.listTicketRecordsUnlocked({ includeArchived: true });
+    const sourceTicket = resolveTicketQuery(ticketId, sourceTickets);
+    const destinationTickets = await destinationBoard.listTicketRecordsUnlocked({ includeArchived: true });
+    const recoveredBySourceId = new Map(destinationTickets
+      .filter((ticket) => ticket.source?.type === 'crewboard-transfer' && ticket.source.projectPath === sourceBoard.root)
+      .map((ticket) => [ticket.source.ticketId, ticket]));
+    const recovered = recoveredBySourceId.get(sourceTicket.id);
     if (sourceTicket.archivedAt && (!recovered || sourceTicket.transferredTo?.projectPath !== destinationBoard.root)) {
       throw new Error(`Ticket is already archived: ${ticketId}`);
     }
-    const created = recovered ? { ticket: recovered, event: null } : await destinationBoard.createTicketUnlocked({
-      title: sourceTicket.title,
-      body: sourceTicket.body,
-      status: destinationBoard.config.columns.includes(sourceTicket.status) ? sourceTicket.status : destinationBoard.config.columns[0],
-      assignee: sourceTicket.assignee,
-      labels: sourceTicket.labels,
-      priority: sourceTicket.priority,
-      links: sourceTicket.links,
-      messages: sourceTicket.messages,
-      source: {
-        type: 'crewboard-transfer',
-        projectPath: sourceBoard.root,
-        ticketId: sourceTicket.id,
-        previousSource: sourceTicket.source ?? null,
-      },
-      archivedAt: now(),
-      actor,
-    });
-    const archived = sourceTicket.archivedAt ? { ticket: sourceTicket, event: null } : await sourceBoard.archiveTicketUnlocked(ticketId, {
-      actor,
-      transferredTo: { projectId: destinationProjectId, ticketId: created.ticket.id, projectPath: destinationBoard.root },
-    });
-    const restored = await destinationBoard.restoreTicketUnlocked(created.ticket.id, { actor });
-    return { ticket: restored.ticket, sourceTicket: archived.ticket, event: restored.event || created.event };
+    const subtree = [];
+    const pending = [sourceTicket];
+    const seen = new Set();
+    while (pending.length) {
+      const ticket = pending.shift();
+      if (seen.has(ticket.id)) continue;
+      seen.add(ticket.id);
+      subtree.push(ticket);
+      pending.push(...sourceTickets.filter((candidate) => candidate.parent === ticket.id));
+    }
+    const transferredBySourceId = new Map(recoveredBySourceId);
+    const recoveredSourceIds = new Set(recoveredBySourceId.keys());
+    const isTransferActive = (ticket) => {
+      const transferred = transferredBySourceId.get(ticket.id);
+      return !ticket.archivedAt || (
+        ticket.transferredTo?.projectPath === destinationBoard.root
+        && ticket.transferredTo?.ticketId === transferred?.id
+      );
+    };
+    const created = [];
+    const archived = [];
+    const restored = [];
+    const recoveredSnapshots = new Map();
+    const sourceArchiveStates = new Map(subtree.map((ticket) => [ticket.id, {
+      archivedAt: ticket.archivedAt,
+      transferredTo: ticket.transferredTo,
+    }]));
+    const recoveredArchiveStates = new Map([...transferredBySourceId.entries()]
+      .filter(([sourceId]) => !created.some(({ ticket }) => ticket.id === sourceId))
+      .map(([sourceId, ticket]) => [sourceId, ticket.archivedAt]));
+    const shouldRestoreSourceOnRollback = (ticket) => {
+      const sourceState = sourceArchiveStates.get(ticket.id);
+      const transferred = transferredBySourceId.get(ticket.id);
+      return !sourceState.archivedAt || (
+        sourceState.transferredTo?.projectPath === destinationBoard.root
+        && sourceState.transferredTo?.ticketId === transferred?.id
+        && recoveredArchiveStates.get(ticket.id)
+      );
+    };
+    try {
+      for (const ticket of subtree) {
+        let transferred = transferredBySourceId.get(ticket.id);
+        const parent = ticket.id === sourceTicket.id
+          ? null
+          : transferredBySourceId.get(ticket.parent)?.id;
+        if (transferred) {
+          if (transferred.parent !== parent) {
+            recoveredSnapshots.set(ticket.id, { archivedAt: transferred.archivedAt, parent: transferred.parent });
+            transferred = { ...transferred, parent, updatedAt: now() };
+            await destinationBoard.writeTicket(transferred);
+            transferredBySourceId.set(ticket.id, transferred);
+          }
+        } else {
+          const result = await destinationBoard.createTicketUnlocked({
+            title: ticket.title,
+            body: ticket.body,
+            type: ticket.type,
+            parent,
+            status: destinationBoard.config.columns.includes(ticket.status) ? ticket.status : destinationBoard.config.columns[0],
+            assignee: ticket.assignee,
+            assignedBy: ticket.assignedBy,
+            reporter: ticket.reporter,
+            labels: ticket.labels,
+            priority: ticket.priority,
+            links: ticket.links,
+            messages: ticket.messages,
+            source: {
+              type: 'crewboard-transfer',
+              projectPath: sourceBoard.root,
+              ticketId: ticket.id,
+              originalType: ticket.type,
+              previousSource: ticket.source ?? null,
+            },
+            archivedAt: ticket.archivedAt || now(),
+            actor,
+            allowUnparentedSubtask: ticket.id === sourceTicket.id && ticket.type === 'subtask',
+          });
+          transferred = result.ticket;
+          created.push({ ticket, result });
+          transferredBySourceId.set(ticket.id, transferred);
+        }
+      }
+      for (const ticket of subtree) {
+        const transferred = transferredBySourceId.get(ticket.id);
+        archived.push(ticket.archivedAt ? { ticket, event: null } : await sourceBoard.archiveTicketUnlocked(ticket.id, {
+          actor,
+          transferredTo: { projectId: destinationProjectId, ticketId: transferred.id, projectPath: destinationBoard.root },
+          allowActiveDescendants: true,
+        }));
+      }
+      const sourceById = new Map(subtree.map((ticket) => [ticket.id, ticket]));
+      const restoreIds = new Set();
+      for (const ticket of subtree.filter(isTransferActive)) {
+        let current = ticket;
+        while (current) {
+          restoreIds.add(current.id);
+          current = current.parent ? sourceById.get(current.parent) : null;
+        }
+      }
+      for (const ticket of subtree) {
+        const transferred = transferredBySourceId.get(ticket.id);
+        restored.push(restoreIds.has(ticket.id) ? await destinationBoard.restoreTicketUnlocked(transferred.id, { actor }) : { ticket: transferred, event: null });
+      }
+      return {
+        ticket: restored[0].ticket,
+        sourceTicket: archived[0].ticket,
+        event: restored.find((result) => result.event)?.event || created[0]?.result.event || null,
+      };
+    } catch (error) {
+      const sourceIds = new Set(subtree.map((ticket) => ticket.id));
+      const stagedDestinationTickets = await destinationBoard.listTicketRecordsUnlocked({ includeArchived: true });
+      const createdDestinationIds = new Set([
+        ...created.map(({ result }) => result.ticket.id),
+        ...stagedDestinationTickets
+          .filter((ticket) => ticket.source?.type === 'crewboard-transfer'
+            && ticket.source.projectPath === sourceBoard.root
+            && sourceIds.has(ticket.source.ticketId)
+            && !recoveredSourceIds.has(ticket.source.ticketId))
+          .map((ticket) => ticket.id),
+      ]);
+      const results = await Promise.allSettled([...subtree
+        .filter(shouldRestoreSourceOnRollback)
+        .map((ticket) => sourceBoard.writeTicket({
+          ...ticket,
+          archivedAt: null,
+          transferredTo: null,
+          updatedAt: now(),
+        })),
+      ...[...recoveredArchiveStates.entries()]
+        .filter(([sourceId, archivedAt]) => archivedAt && !created.some(({ ticket }) => ticket.id === sourceId))
+        .map(([sourceId, archivedAt]) => {
+          const ticket = transferredBySourceId.get(sourceId);
+          return destinationBoard.writeTicket({ ...ticket, archivedAt, parent: recoveredSnapshots.get(sourceId)?.parent ?? ticket.parent, updatedAt: now() });
+        }),
+      ...[...recoveredSnapshots.entries()]
+        .filter(([sourceId]) => !recoveredArchiveStates.get(sourceId))
+        .map(([sourceId, snapshot]) => destinationBoard.writeTicket({ ...transferredBySourceId.get(sourceId), ...snapshot, updatedAt: now() })),
+      ...[...createdDestinationIds].map((id) => fs.unlink(path.join(destinationBoard.ticketsPath, ticketFileName(id))))]);
+      const cleanupFailures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
+      if (cleanupFailures.length) throw new AggregateError([error, ...cleanupFailures], 'Transfer failed and rollback was incomplete.');
+      const sourceEventIds = archived.map((result) => result.event?.id).filter(Boolean);
+      const destinationEventIds = [
+        ...created.map(({ result }) => result.event?.id),
+        ...restored.map((result) => result.event?.id),
+      ].filter(Boolean);
+      const compensation = await Promise.allSettled([
+        ...(sourceEventIds.length ? [sourceBoard.appendEvent('transfer-rolled-back', {
+          ticketId: sourceTicket.id,
+          actor,
+          data: { revertedEventIds: sourceEventIds },
+        })] : []),
+        ...(destinationEventIds.length ? [destinationBoard.appendEvent('transfer-rolled-back', {
+          ticketId: sourceTicket.id,
+          actor,
+          data: { revertedEventIds: destinationEventIds },
+        })] : []),
+      ]);
+      const compensationFailures = compensation.filter((result) => result.status === 'rejected').map((result) => result.reason);
+      if (compensationFailures.length) throw new AggregateError([error, ...compensationFailures], 'Transfer failed and rollback activity could not be recorded.');
+      throw error;
+    }
   });
 }

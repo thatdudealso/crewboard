@@ -413,7 +413,8 @@ export async function listWorkspace(filePath) {
   const projects = await Promise.all(activeRecords.map(async (project) => {
     try {
       const board = await BoardStore.open(project.boardPath);
-      return { ...project, columns: board.config.columns, tickets: await board.listTickets(), available: true };
+      const agents = await board.agents();
+      return { ...project, columns: board.config.columns, tickets: await board.listTickets(), agents: agents.agents, available: true };
     } catch (error) {
       return { ...project, columns: [], tickets: [], available: false, error: error.message };
     }

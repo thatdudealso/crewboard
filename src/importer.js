@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { normalizePriority } from './priority.js';
 import { cleanList } from './utils.js';
 
 function metadata(line) {
@@ -32,7 +33,7 @@ export function parseTasksAxi(markdown) {
       state: details.state || null,
       assignee: details.assignee || details.owner || null,
       labels: cleanList([details.label || '', details.labels || '', details.kind || '']),
-      priority: details.priority || 'normal',
+      priority: details.priority || 'medium',
       links: cleanList([details.pr || '', details.link || '', details.file || '']),
     });
   }
@@ -47,16 +48,35 @@ function mappedStatus(board, task) {
   return board.config.columns[0];
 }
 
+function importedPriority(task) {
+  const priority = normalizePriority(task.priority, { fallback: 'medium', strict: false });
+  try {
+    normalizePriority(task.priority);
+    return { priority, normalization: null };
+  } catch {
+    return {
+      priority,
+      normalization: {
+        sourceKey: task.key,
+        field: 'priority',
+        from: task.priority,
+        to: priority,
+      },
+    };
+  }
+}
+
 export async function importTasksAxi(board, sourcePath, { actor = 'tasks-axi' } = {}) {
   const tasks = parseTasksAxi(await fs.readFile(sourcePath, 'utf8'));
   return board.withMutationLock(async () => {
     await board.refreshConfig();
-    const tickets = await board.listTickets();
+    const tickets = await board.listTickets({ includeArchived: true });
     const bySourceKey = new Map(tickets.filter((ticket) => ticket.source?.type === 'tasks-axi').map((ticket) => [ticket.source.key, ticket]));
-    const result = { sourcePath, imported: [], updated: [], unchanged: [], skipped: [] };
+    const result = { sourcePath, imported: [], updated: [], unchanged: [], skipped: [], normalizations: [] };
 
     for (const task of tasks) {
       const status = mappedStatus(board, task);
+      const { priority, normalization } = importedPriority(task);
       const source = { type: 'tasks-axi', key: task.key };
       const existing = bySourceKey.get(task.key);
       if (!existing) {
@@ -66,19 +86,29 @@ export async function importTasksAxi(board, sourcePath, { actor = 'tasks-axi' } 
           status,
           assignee: task.assignee,
           labels: task.labels,
-          priority: task.priority,
+          priority,
           links: task.links,
           source,
           actor,
         });
         bySourceKey.set(task.key, created.ticket);
         result.imported.push(created.ticket);
+        if (normalization) result.normalizations.push({ ...normalization, ticketId: created.ticket.id });
         continue;
       }
-      const changes = { title: task.title, status, assignee: task.assignee, labels: task.labels, priority: task.priority, links: task.links };
+      const changes = {
+        title: task.title,
+        status,
+        assignee: task.assignee,
+        labels: task.labels,
+        priority,
+        links: task.links,
+        ...(existing.archivedAt ? { archivedAt: null, transferredTo: null } : {}),
+      };
       const changed = Object.entries(changes).some(([key, value]) => JSON.stringify(existing[key]) !== JSON.stringify(value));
       if (!changed) {
         result.unchanged.push(existing);
+        if (normalization) result.normalizations.push({ ...normalization, ticketId: existing.id });
         continue;
       }
       const updated = await board.updateTicketUnlocked(existing.id, changes, {
@@ -88,6 +118,7 @@ export async function importTasksAxi(board, sourcePath, { actor = 'tasks-axi' } 
       });
       bySourceKey.set(task.key, updated.ticket);
       result.updated.push(updated.ticket);
+      if (normalization) result.normalizations.push({ ...normalization, ticketId: updated.ticket.id });
     }
     return result;
   });
