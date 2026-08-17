@@ -7,6 +7,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Board data is intentionally tracked in `.crewboard/`; do not add it to `.gitignore`.
 - The always-on fleet rollout contract is `agents/crewboard-fleet-contract.md`; apply `skills/crewboard-ticket/SKILL.md` whenever project work creates or updates a ticket.
 - Captain GitHub attention: `crewboard github attention` / web **GitHub attention** view; config is `githubAttention` in the workspace file (see README). Server fetches via local `gh`; never treat an unavailable GitHub source as an empty all-clear.
+- Captain web UI assets live in `src/web-ui/` (`app.css` / `app.js`); keep containment, truncation, visual grouping (section/field groups), and the calm dark depth system when editing presentation.
+- Board poll skips re-render when `/api/board` is unchanged and restores scroll across forced renders (`boardFingerprint` / `captureScroll` in `src/web-ui/app.js`).
 
 ## Maintaining this file
 

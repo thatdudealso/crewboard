@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "lint": "node --check bin/crewboard.js && node --check src/*.js"
+    "lint": "node --check bin/crewboard.js && node --check src/*.js && node --check src/web-ui/app.js"
   },
   "files": [
     "bin",
